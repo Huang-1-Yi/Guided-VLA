@@ -8,12 +8,11 @@ from openpi_client import base_policy as _base_policy
 
 
 class ActionChunkBroker(_base_policy.BasePolicy):
-    """Wraps a policy to return action chunks one-at-a-time.
+    """包装一个 policy，使其逐个返回 action chunk。
 
-    Assumes that the first dimension of all action fields is the chunk size.
+    假设所有 action 字段的第一维都是 chunk size。
 
-    A new inference call to the inner policy is only made when the current
-    list of chunks is exhausted.
+    只有当前 chunk 列表耗尽时，才会对内部 policy 发起新的推理调用。
     """
 
     def __init__(self, policy: _base_policy.BasePolicy, action_horizon: int):

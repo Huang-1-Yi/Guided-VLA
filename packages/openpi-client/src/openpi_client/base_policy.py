@@ -5,8 +5,8 @@ from typing import Dict
 class BasePolicy(abc.ABC):
     @abc.abstractmethod
     def infer(self, obs: Dict) -> Dict:
-        """Infer actions from observations."""
+        """根据观测推理动作。"""
 
     def reset(self) -> None:
-        """Reset the policy to its initial state."""
+        """将 policy 重置到初始状态。"""
         pass

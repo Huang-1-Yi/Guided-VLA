@@ -16,15 +16,14 @@ logger = logging.getLogger(__name__)
 @runtime_checkable
 class WeightLoader(Protocol):
     def load(self, params: at.Params) -> at.Params:
-        """Loads the model weights.
+        """加载模型权重。
 
         Args:
-            params: Parameters of the model. This is a nested structure of array-like objects that
-                represent the model's parameters.
+            params: 模型参数。这是由 array-like 对象组成的嵌套结构，用于表示模型参数。
 
         Returns:
-            Loaded parameters. The structure must be identical to `params`. If returning a subset of
-            the parameters the loader must merge the loaded parameters with `params`.
+            加载后的参数。结构必须与 `params` 完全一致。如果只返回参数子集，
+            loader 必须将加载到的参数与 `params` 合并。
         """
 
 
@@ -36,30 +35,30 @@ class NoOpWeightLoader(WeightLoader):
 
 @dataclasses.dataclass(frozen=True)
 class CheckpointWeightLoader(WeightLoader):
-    """Loads an entire set of weights from a checkpoint.
+    """从 checkpoint 加载整套权重。
 
-    Compatible with:
-      trained checkpoints:
+    兼容：
+      训练产生的 checkpoint：
         example: "./checkpoints/<config>/<exp>/<step>/params"
-      released checkpoints:
+      发布的 checkpoint：
         example: "gs://openpi-assets/checkpoints/<model>/params"
     """
 
     params_path: str
 
     def load(self, params: at.Params) -> at.Params:
-        # We are loading np.ndarray and relying on the training code to properly convert and shard the params.
+        # 这里加载 np.ndarray，并依赖训练代码正确转换和分片参数。
         loaded_params = _model.restore_params(self.params_path, restore_type=np.ndarray)
-        # Add all missing LoRA weights.
+        # 添加所有缺失的 LoRA 权重。
         return _merge_params(loaded_params, params, missing_regex=".*lora.*")
 
 
 @dataclasses.dataclass(frozen=True)
 class PaliGemmaWeightLoader(WeightLoader):
-    """Loads weights from the official PaliGemma checkpoint.
+    """从官方 PaliGemma checkpoint 加载权重。
 
-    This will overwrite existing weights with similar names while keeping all extra weights intact.
-    This allows us to support the action expert which is used by the Pi0 model.
+    这会覆盖名称相似的已有权重，同时保留所有额外权重不变。
+    这样可以支持 Pi0 模型使用的 action expert。
     """
 
     def load(self, params: at.Params) -> at.Params:
@@ -69,25 +68,25 @@ class PaliGemmaWeightLoader(WeightLoader):
         with path.open("rb") as f:
             flat_params = dict(np.load(f, allow_pickle=False))
         loaded_params = {"PaliGemma": flax.traverse_util.unflatten_dict(flat_params, sep="/")["params"]}
-        # Add all missing weights.
+        # 添加所有缺失权重。
         return _merge_params(loaded_params, params, missing_regex=".*")
 
 
 def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex: str) -> at.Params:
-    """Merges the loaded parameters with the reference parameters.
+    """将加载参数与参考参数合并。
 
     Args:
-        loaded_params: The parameters to merge.
-        params: The reference parameters.
-        missing_regex: A regex pattern for all missing keys that should be merged from the reference parameters.
+        loaded_params: 要合并的参数。
+        params: 参考参数。
+        missing_regex: 用于匹配所有缺失 key 的正则表达式，这些 key 应从参考参数中补齐。
 
     Returns:
-        A new dictionary with the merged parameters.
+        包含合并后参数的新字典。
     """
     flat_ref = flax.traverse_util.flatten_dict(params, sep="/")
     flat_loaded = flax.traverse_util.flatten_dict(loaded_params, sep="/")
 
-    # First, take all weights that are a subset of the reference weights.
+    # 首先取出所有属于参考权重子集的权重。
     result = {}
     for k, v in flat_loaded.items():
         if k in flat_ref:
@@ -95,7 +94,7 @@ def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex:
 
     flat_loaded.clear()
 
-    # Then, merge any missing weights as defined by the missing regex.
+    # 然后根据 missing_regex 合并所有缺失权重。
     pattern = re.compile(missing_regex)
     for k in {k for k in flat_ref if pattern.fullmatch(k)}:
         if k not in result:

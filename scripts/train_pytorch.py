@@ -1,8 +1,8 @@
 """
-PyTorch training entrypoint for PI0/PI05 with multi-GPU and multi-node (DDP) support.
-This script mirrors the behavior of the JAX trainer (`scripts/train.py`) but runs
-entirely in PyTorch using the `PI0Pytorch` model and your existing config/data
-pipeline from `src/openpi/training/config.py` and `src/openpi/training/data_loader.py`.
+支持多 GPU 和多节点（DDP）的 PI0/PI05 PyTorch 训练入口。
+该脚本对齐 JAX 训练器（`scripts/train.py`）的行为，但完全在 PyTorch 中运行，
+使用 `PI0Pytorch` 模型以及 `src/openpi/training/config.py`、
+`src/openpi/training/data_loader.py` 中已有的 config/data pipeline。
 
 Usage
 Single GPU:
@@ -24,19 +24,19 @@ Multi-Node Training:
     scripts/train_pytorch.py <config_name> --exp_name=<run_name>
 
 Dataset Configuration:
-  --local_root_dir (str)              : Override local dataset directory
+  --local_root_dir (str)              : 覆盖本地数据集目录
 
 Supported command-line overrides:
-  --control_net_enabled (bool)          : Enable/disable ControlNet
-  --lambda_object (float)               : Weight for object loss (overrides config.object_loss_weight)
-  --lambda_skill (float)                : Weight for skill loss (overrides config.skill_loss_weight)
-  --local_root_dir (str)                : Local root directory for dataset (overrides config)
+  --control_net_enabled (bool)          : 启用/禁用 ControlNet
+  --lambda_object (float)               : object loss 权重（覆盖 config.object_loss_weight）
+  --lambda_skill (float)                : skill loss 权重（覆盖 config.skill_loss_weight）
+  --local_root_dir (str)                : 数据集本地根目录（覆盖 config）
 
 Dataset Examples:
-  # Train with LIBERO dataset (typically uses predefined paths in config)
+  # 使用 LIBERO 数据集训练（通常使用 config 中预定义的路径）
   torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim --exp_name libero_train
 
-  # Train with an explicit local dataset root
+  # 使用显式指定的本地数据集根目录训练
   torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim \
     --exp_name robotwin_train --local_root_dir=/path/to/lerobot/root
 
@@ -81,7 +81,7 @@ import openpi.training.config as _config
 import openpi.training.data_loader as _data
 
 # ---------------------------------------------------------------------------
-# Training constants
+# 训练常量
 # ---------------------------------------------------------------------------
 _DDP_TIMEOUT_MINUTES = 10
 _DEFAULT_OBJECT_LOSS_WEIGHT = 0.1
@@ -116,7 +116,7 @@ def init_logging():
 
 
 def make_json_serializable(obj):
-    """Recursively convert non-JSON-serializable types to serializable ones."""
+    """递归地将不可 JSON 序列化的类型转换为可序列化形式。"""
     if isinstance(obj, dict):
         return {k: make_json_serializable(v) for k, v in obj.items()}
     if isinstance(obj, list | tuple):
@@ -126,13 +126,13 @@ def make_json_serializable(obj):
     if isinstance(obj, pathlib.Path):
         return str(obj)
     if hasattr(obj, "__dict__"):
-        # For dataclass-like objects that weren't converted
+        # 处理未被转换的 dataclass-like 对象。
         return str(obj)
     return obj
 
 
 def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = True):
-    """Initialize wandb logging."""
+    """初始化 wandb 日志。"""
     if not enabled:
         wandb.init(mode="disabled")
         return
@@ -164,15 +164,15 @@ def setup_ddp():
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     use_ddp = world_size > 1
 
-    # LOCAL_RANK is set by torchrun; fall back to RANK or 0
+    # LOCAL_RANK 由 torchrun 设置；未设置时回退到 RANK 或 0。
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
 
-    # set device early BEFORE any distributed init or model creation
+    # 在任何 distributed init 或模型创建之前尽早设置 device。
     if torch.cuda.is_available():
-        # make sure local_rank is within device_count
+        # 确保 local_rank 位于 device_count 范围内。
         dev_count = torch.cuda.device_count()
         if local_rank >= dev_count:
-            # Defensive: print diagnostics and raise a helpful error
+            # 防御性检查：输出诊断信息并抛出更有帮助的错误。
             raise RuntimeError(
                 f"LOCAL_RANK ({local_rank}) >= torch.cuda.device_count() ({dev_count}). "
                 "Check CUDA_VISIBLE_DEVICES and torchrun configuration."
@@ -184,7 +184,7 @@ def setup_ddp():
 
         timeout = datetime.timedelta(minutes=_DDP_TIMEOUT_MINUTES)
 
-        # Log environment for debugging
+        # 记录环境信息，便于调试。
         logging.info(
             f"[setup_ddp] Initializing DDP with backend={backend}, "
             f"MASTER_ADDR={os.environ.get('MASTER_ADDR')}, "
@@ -194,17 +194,15 @@ def setup_ddp():
             f"LOCAL_RANK={os.environ.get('LOCAL_RANK')}"
         )
 
-        # Reduce GIL contention in NCCL's stream management; detect errors
-        # asynchronously rather than hanging indefinitely.
+        # 减少 NCCL stream management 中的 GIL 竞争；异步检测错误，避免无限挂起。
         os.environ.setdefault("TORCH_NCCL_AVOID_RECORD_STREAMS", "1")
         os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
 
-        # do NOT pass device_id or torch.device to init_process_group
+        # 不要向 init_process_group 传递 device_id 或 torch.device。
         torch.distributed.init_process_group(backend=backend, init_method="env://", timeout=timeout)
 
-        # NOTE: Do NOT set TORCH_DISTRIBUTED_DEBUG=DETAIL here as it creates
-        # an extra Gloo process group wrapper that can cause timeout issues
-        # in multi-node/containerized environments
+        # NOTE: 不要在这里设置 TORCH_DISTRIBUTED_DEBUG=DETAIL，因为它会创建额外的
+        # Gloo process group wrapper，在多节点/容器化环境中可能导致超时问题。
 
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
 
@@ -239,12 +237,12 @@ def set_seed(seed: int, local_rank: int):
         torch.cuda.manual_seed_all(seed + local_rank)
 
 
-# Cache zeroed object-supervision tensors to keep torch.compile input signatures stable.
+# 缓存全零 object-supervision tensors，以保持 torch.compile 输入签名稳定。
 _empty_object_target_cache: dict[tuple[int, torch.device], dict[str, torch.Tensor]] = {}
 
 
 def get_empty_object_targets(batch_size: int, device: torch.device) -> dict[str, torch.Tensor]:
-    """Return cached all-zero object-supervision tensors for a fixed `(batch_size, device)`."""
+    """返回固定 `(batch_size, device)` 对应的缓存全零 object-supervision tensors。"""
     key = (batch_size, device)
     if key in _empty_object_target_cache:
         return _empty_object_target_cache[key]
@@ -267,7 +265,7 @@ def prepare_object_targets(
     *,
     use_object_loss: bool,
 ) -> dict[str, torch.Tensor] | None:
-    """Return object-supervision tensors with a fixed structure for torch.compile."""
+    """返回结构固定的 object-supervision tensors，供 torch.compile 使用。"""
     if not use_object_loss:
         return None
 
@@ -299,7 +297,7 @@ def prepare_object_targets(
 
 
 def build_data_loaders(config: _config.TrainConfig):
-    """Build training and validation data loaders."""
+    """构建训练和验证 data loaders。"""
     start = time.time()
 
     train_loader = _data.create_data_loader(config, framework="pytorch", shuffle=True, split="train")
@@ -388,7 +386,7 @@ def compute_batch_losses(
 
 
 def initialize_checkpoint_dir(config: _config.TrainConfig) -> bool:
-    """Prepare checkpoint directory and determine resume state."""
+    """准备 checkpoint 目录，并判断是否处于 resume 状态。"""
     if config.resume:
         exp_checkpoint_dir = config.checkpoint_dir
         if not exp_checkpoint_dir.exists():
@@ -415,7 +413,7 @@ def normalize_state_dict_for_loading(
     *,
     source_label: str,
 ) -> dict[str, torch.Tensor]:
-    """Normalize compile-wrapper prefixes and tied weights before loading."""
+    """加载前规范化 compile-wrapper 前缀和 tied weights。"""
     embed_tokens_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
     lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
 
@@ -448,7 +446,7 @@ def normalize_state_dict_for_loading(
 
 
 def split_missing_keys(missing_keys: list[str]) -> tuple[list[str], list[str]]:
-    """Split missing keys into expected and unexpected groups."""
+    """将 missing keys 切分为预期缺失和非预期缺失两组。"""
     expected_missing_keys = []
     unexpected_missing_keys = []
     for key in missing_keys:
@@ -460,7 +458,7 @@ def split_missing_keys(missing_keys: list[str]) -> tuple[list[str], list[str]]:
 
 
 def unwrap_model(model, *, log_compile_unwrap: bool = False):
-    """Unwrap top-level DDP/torch.compile wrappers regardless of nesting order."""
+    """无论嵌套顺序如何，都解开顶层 DDP/torch.compile wrappers。"""
     unwrapped_model = model
     saw_compile_wrapper = False
     while True:
@@ -481,7 +479,7 @@ def unwrap_model(model, *, log_compile_unwrap: bool = False):
 
 @contextlib.contextmanager
 def temporarily_unwrap_compiled_modules(model, *, log_prefix: str | None = None):
-    """Temporarily swap compiled child modules for their original modules."""
+    """临时将已编译的子模块替换回其原始模块。"""
     root_model = unwrap_model(model, log_compile_unwrap=log_prefix is not None)
     replaced_children: list[tuple[torch.nn.Module, str, torch.nn.Module]] = []
 
@@ -511,29 +509,29 @@ def temporarily_unwrap_compiled_modules(model, *, log_prefix: str | None = None)
 
 
 def save_checkpoint(model, optimizer, global_step, config, is_main, data_config):
-    """Save a checkpoint with model state, optimizer state, and metadata."""
+    """保存包含模型 state、optimizer state 和 metadata 的 checkpoint。"""
     if not is_main:
         return
 
-    # Only save if it's time to save or if it's the final step
+    # 仅在达到保存间隔或最终 step 时保存。
     if (global_step % config.save_interval == 0 and global_step > 0) or global_step == config.num_train_steps - 1:
-        # Create temporary directory for atomic checkpoint saving
+        # 创建临时目录，用于原子化保存 checkpoint。
         final_ckpt_dir = config.checkpoint_dir / f"{global_step}"
         tmp_ckpt_dir = config.checkpoint_dir / f"tmp_{global_step}"
 
-        # Remove any existing temp directory and create new one
+        # 移除已有临时目录，并创建新的临时目录。
         if tmp_ckpt_dir.exists():
             shutil.rmtree(tmp_ckpt_dir)
         tmp_ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save a checkpoint with clean module keys even when training uses nested torch.compile wrappers.
+        # 即使训练使用嵌套 torch.compile wrappers，也用干净的 module keys 保存 checkpoint。
         with temporarily_unwrap_compiled_modules(model, log_prefix="Saving checkpoint") as model_to_save:
             safetensors.torch.save_model(model_to_save, tmp_ckpt_dir / "model.safetensors")
 
-        # Save optimizer state using PyTorch format
+        # 使用 PyTorch 格式保存 optimizer state。
         torch.save(optimizer.state_dict(), tmp_ckpt_dir / "optimizer.pt")
 
-        # Save training metadata (avoid saving full config to prevent JAX/Flax compatibility issues)
+        # 保存训练 metadata，避免保存完整 config 引入 JAX/Flax 兼容性问题。
         metadata = {
             "global_step": global_step,
             "config": dataclasses.asdict(config),
@@ -541,12 +539,12 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
         }
         torch.save(metadata, tmp_ckpt_dir / "metadata.pt")
 
-        # save norm stats
+        # 保存 norm stats。
         norm_stats = data_config.norm_stats
         if norm_stats is not None and data_config.asset_id is not None:
             _normalize.save(tmp_ckpt_dir / "assets" / data_config.asset_id, norm_stats)
 
-        # Atomically move temp directory to final location
+        # 将临时目录原子化移动到最终位置。
         if final_ckpt_dir.exists():
             shutil.rmtree(final_ckpt_dir)
         tmp_ckpt_dir.rename(final_ckpt_dir)
@@ -555,7 +553,7 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
 
 
 def load_checkpoint(model, optimizer, checkpoint_dir, device):
-    """Load the latest checkpoint and return the global step."""
+    """加载最新 checkpoint，并返回 global step。"""
     checkpoint_steps = [
         int(d.name)
         for d in checkpoint_dir.iterdir()
@@ -568,7 +566,7 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
     latest_step = max(checkpoint_steps)
     ckpt_dir = checkpoint_dir / f"{latest_step}"
 
-    # Clear memory before loading checkpoints
+    # 加载 checkpoint 前清理显存/内存。
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         gc.collect()
@@ -586,8 +584,8 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
         missing_keys, unexpected_keys = model_to_load.load_state_dict(state_dict, strict=False)
     expected_missing_keys, unexpected_missing_keys = split_missing_keys(missing_keys)
 
-    # Validate control-attention structure: config must match checkpoint.
-    # By this point, CA is already injected (or not) based on config in build_model.
+    # 校验 control-attention 结构：config 必须与 checkpoint 匹配。
+    # 到这里时，build_model 已经根据 config 注入（或未注入）CA。
     ca_missing = [k for k in missing_keys if ".origin." in k or "object_branch" in k]
     ca_unexpected = [k for k in unexpected_keys if "object_branch" in k]
     if ca_missing:
@@ -644,7 +642,7 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
 
 
 def get_latest_checkpoint_step(checkpoint_dir):
-    """Get the latest checkpoint step number from a checkpoint directory."""
+    """从 checkpoint 目录获取最新 checkpoint step。"""
     checkpoint_steps = [
         int(d.name)
         for d in checkpoint_dir.iterdir()
@@ -654,7 +652,7 @@ def get_latest_checkpoint_step(checkpoint_dir):
 
 
 def log_memory_usage(device, step, phase="unknown"):
-    """Log detailed memory usage information."""
+    """记录详细的内存/显存使用信息。"""
     if not torch.cuda.is_available():
         return
 
@@ -663,12 +661,12 @@ def log_memory_usage(device, step, phase="unknown"):
     memory_free = torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
     memory_free = memory_free / 1e9
 
-    # Get more detailed memory info
+    # 获取更详细的显存信息。
     memory_stats = torch.cuda.memory_stats(device)
     max_memory_allocated = memory_stats.get("allocated_bytes.all.peak", 0) / 1e9
     max_memory_reserved = memory_stats.get("reserved_bytes.all.peak", 0) / 1e9
 
-    # Get DDP info if available
+    # 如果可用，获取 DDP 信息。
     ddp_info = ""
     if dist.is_initialized():
         ddp_info = f" | DDP: rank={dist.get_rank()}, world_size={dist.get_world_size()}"
@@ -691,7 +689,7 @@ def run_validation(
     use_skill_loss: bool = False,
     use_ddp: bool = False,
 ):
-    """Run validation and return average loss metrics."""
+    """运行验证，并返回平均 loss 指标。"""
     model.eval()
 
     total_loss = 0.0
@@ -870,7 +868,7 @@ def build_model(
     use_skill_loss: bool,
     use_object_loss: bool,
 ):
-    """Build model, load weights, enable ControlAttention, compile, wrap with DDP."""
+    """构建模型、加载权重、启用 ControlAttention、编译并封装 DDP。"""
     if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
         runtime_model_config = openpi.models.pi0_config.Pi0Config(
             dtype=config.pytorch_training_precision,
@@ -904,9 +902,9 @@ def build_model(
             "'gs://openpi-assets/checkpoints/pi0_libero' or a local converted checkpoint."
         )
 
-    # Resume: inject ControlAttention BEFORE loading weights (inject-then-load).
-    # The resume checkpoint already has .origin./* and object_branch./* keys — matching
-    # the injected model structure.
+    # Resume：加载权重前先注入 ControlAttention（inject-then-load）。
+    # resume checkpoint 已经包含 .origin./* 和 object_branch./* keys，
+    # 与注入后的模型结构匹配。
     control_attention_kwargs = {
         "num_control_heads": getattr(train_model_config, "control_attention_num_heads", None),
         "copy_weights": getattr(train_model_config, "control_attention_copy_weights", None),
@@ -916,8 +914,8 @@ def build_model(
     if resuming and getattr(train_model_config, "control_attention_enabled", False):
         model.enable_control_attention(**control_attention_kwargs)
 
-    # Pretrained init: load base weights first, then inject CA (load-then-inject).
-    # Loading first preserves pretrained weights in the .origin branch when CA is injected.
+    # Pretrained init：先加载 base weights，再注入 CA（load-then-inject）。
+    # 先加载可在注入 CA 后保留 .origin 分支中的 pretrained weights。
     if config.pytorch_weight_path is not None and not resuming:
         logging.info(f"Loading pretrained weights from: {config.pytorch_weight_path}")
         checkpoint_dir = download.maybe_download(config.pytorch_weight_path)
@@ -938,7 +936,7 @@ def build_model(
     elif resuming:
         logging.info("Skipping pretrained weight loading — will load from checkpoint instead")
 
-    # Pretrained init with CA: inject AFTER loading base weights (load-then-inject pattern).
+    # 带 CA 的 pretrained init：加载 base weights 后再注入（load-then-inject 模式）。
     if not resuming and getattr(train_model_config, "control_attention_enabled", False):
         model.enable_control_attention(**control_attention_kwargs)
 
@@ -964,19 +962,19 @@ def build_model(
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = _PYTORCH_CUDA_ALLOC_CONF
         logging.info("Enabled CUDA optimizations: TF32, cuDNN benchmark")
 
-    # DDP wrap BEFORE torch.compile — per PyTorch docs, compile(DDP(model)) allows the
-    # compiler to fold allreduce into the compiled graph, avoiding graph breaks at DDP
-    # boundaries. The reverse order (DDP(compile(model))) prevents this fusion.
+    # 在 torch.compile 之前封装 DDP。根据 PyTorch 文档，compile(DDP(model)) 允许编译器
+    # 将 allreduce 融入编译图，避免在 DDP 边界发生 graph break。
+    # 反过来的顺序（DDP(compile(model))）会阻止这种融合。
     if use_ddp:
         os.environ.setdefault("NCCL_P2P_DISABLE", "0")
         num_local_gpus = torch.cuda.device_count()
         if world_size <= num_local_gpus:
-            # Single-node: NVLink P2P is the fast inter-GPU path.
+            # 单节点：NVLink P2P 是快速 GPU 间通信路径。
             os.environ.setdefault("NCCL_P2P_LEVEL", "NVL")
             logging.info("Single-node DDP: enabled NVLink P2P optimization")
         else:
-            # Multi-node: inter-node communication goes over IB/RoCE.
-            # NCCL_P2P_LEVEL=NVL is irrelevant here; cluster provides IB vars.
+            # 多节点：节点间通信通过 IB/RoCE。
+            # NCCL_P2P_LEVEL=NVL 在这里无关；集群会提供 IB 变量。
             logging.info(
                 f"Multi-node DDP: {world_size} GPUs across "
                 f"{world_size // max(num_local_gpus, 1)} nodes. "
@@ -984,13 +982,12 @@ def build_model(
                 f"IB_HCA={os.environ.get('NCCL_IB_HCA', 'unset')}, "
                 f"GDR_LEVEL={os.environ.get('NCCL_GDR_LEVEL', os.environ.get('NCCL_NET_GDR_LEVEL', 'unset'))}"
             )
-        # Default False: find_unused_parameters=True adds ~20% allreduce overhead.
-        # Set to True in config only if some parameters genuinely skip gradients some steps.
+        # 默认 False：find_unused_parameters=True 会增加约 20% allreduce 开销。
+        # 只有当某些参数确实在部分 step 中跳过梯度时，才在 config 中设为 True。
         ddp_find_unused = getattr(config, "ddp_find_unused_parameters", False)
-        # static_graph=True is incompatible with gradient checkpointing: GC re-runs the forward
-        # during backward, violating DDP's assumption of a fixed graph. In multi-node NCCL this
-        # causes a deadlock because allreduce operations are pre-scheduled for a graph that
-        # changes shape at every backward step.
+        # static_graph=True 与 gradient checkpointing 不兼容：GC 会在 backward 时重新运行 forward，
+        # 这违反了 DDP 对固定图的假设。在多节点 NCCL 中，这会导致死锁，因为 allreduce 操作
+        # 是按预设图调度的，但该图在每个 backward step 都会改变形态。
         static_graph = not ddp_find_unused and not enable_gc
         model = torch.nn.parallel.DistributedDataParallel(
             model,
@@ -1001,32 +998,29 @@ def build_model(
             broadcast_buffers=False,
         )
 
-    # Compile sub-modules with mode="default" (Inductor fusion only, no cudagraphs).
-    # We previously used mode="reduce-overhead" to get CUDA graphs on the heavy compute
-    # path, but on multi-node DDP (>1 node) cudagraph_trees tripped the invariant
+    # 使用 mode="default" 编译子模块（仅 Inductor fusion，不使用 cudagraphs）。
+    # 之前使用 mode="reduce-overhead" 是为了在重计算路径上启用 CUDA graphs，但在多节点 DDP
+    #（>1 node）中，cudagraph_trees 会在 backward 触发不变量：
     # "input tensor deallocate during graph recording that did not occur during replay"
-    # at backward — all ranks crashed identically. The nested sibling cudagraphs
-    # (embed_image → vision_tower.encoder, paligemma_with_expert → embed_image) have
-    # saved-tensor lifetimes that diverge between recording and replay under DDP's
-    # gradient bucketing. "default" keeps Inductor kernel fusion (the bulk of the win)
-    # without cudagraphs, so it works identically on single-node and multi-node.
-    # DDP uses static_graph=True so allreduce is pre-scheduled without needing
-    # compile(DDP) allreduce fusion.
+    # 在 backward 时，所有 rank 都会以相同方式崩溃。嵌套的 sibling cudagraphs
+    #（embed_image -> vision_tower.encoder，paligemma_with_expert -> embed_image）
+    # 在 DDP gradient bucketing 下，其 saved-tensor 生命周期在 recording 和 replay 间会分歧。
+    # "default" 保留 Inductor kernel fusion（主要收益来源），但不使用 cudagraphs，
+    # 因此单节点和多节点行为一致。DDP 使用 static_graph=True，因此 allreduce 会被预调度，
+    # 不需要 compile(DDP) 的 allreduce fusion。
     logging.info("Torch compiling the model...")
     _inner = model.module if use_ddp else model
     if hasattr(_inner, "paligemma_with_expert"):
-        # Compile the embedding entry points as standalone callables BEFORE wrapping
-        # paligemma_with_expert itself. torch.compile only intercepts a module's forward
-        # (via __call__), so calling bound methods like .embed_image / .embed_language_tokens
-        # on an OptimizedModule bypasses the compiled graph and runs eager. Compiling the
-        # bound methods directly makes each call go through its own compiled graph.
-        # This must happen before the outer compile, because setting attributes on an
-        # OptimizedModule wrapper does not forward to _orig_mod.
+        # 在封装 paligemma_with_expert 自身之前，先将 embedding 入口编译为独立 callable。
+        # torch.compile 只拦截 module 的 forward（通过 __call__），因此在 OptimizedModule 上调用
+        # .embed_image / .embed_language_tokens 这类 bound methods 会绕过编译图并以 eager 运行。
+        # 直接编译 bound methods 可让每次调用进入各自的编译图。必须在外层 compile 前执行，
+        # 因为在 OptimizedModule wrapper 上设置属性不会转发到 _orig_mod。
         _pwe = _inner.paligemma_with_expert
-        # Compile the SigLIP vision encoder directly as an nn.Module — its forward
-        # is a clean loop over encoder layers without the can_return_tuple decorator
-        # that causes graph breaks on the outer SiglipVisionModel/Transformer wrappers.
-        # This lets torch.compile fuse the bulk of vision-tower FLOPs effectively.
+        # 直接将 SigLIP vision encoder 作为 nn.Module 编译。
+        # 它的 forward 是干净的 encoder layer 循环，没有外层 SiglipVisionModel/Transformer wrappers
+        # 上会导致 graph break 的 can_return_tuple decorator。
+        # 这样 torch.compile 可以有效融合 vision-tower 的大部分 FLOPs。
         _vt = _pwe.paligemma.model.vision_tower.vision_model
         _vt.encoder = torch.compile(_vt.encoder, mode="default", dynamic=False)
         _pwe.embed_image = torch.compile(_pwe.embed_image, mode="default", dynamic=False)
@@ -1041,7 +1035,7 @@ def build_model(
 
 
 def build_optimizer(model, config: _config.TrainConfig, peak_lr: float):
-    """Create AdamW optimizer with optional backbone LR scaling."""
+    """创建 AdamW optimizer，并可选地对 backbone LR 进行缩放。"""
     scale = getattr(config, "backbone_lr_scale", 1.0)
     if scale != 1.0:
         backbone_params, new_head_params = [], []
@@ -1179,7 +1173,7 @@ def train_loop(
 
     def lr_schedule(step: int):
         if step < warmup_steps:
-            # Match JAX behavior: start from peak_lr / (warmup_steps + 1)
+            # 对齐 JAX 行为：从 peak_lr / (warmup_steps + 1) 开始。
             init_lr = peak_lr / (warmup_steps + 1)
             return init_lr + (peak_lr - init_lr) * step / warmup_steps
         progress = min(1.0, (step - warmup_steps) / max(1, decay_steps - warmup_steps))
@@ -1188,7 +1182,7 @@ def train_loop(
 
     model.train()
     start_time = time.time()
-    # Running accumulators — only call .item() at log time to avoid per-step CPU-GPU sync
+    # 运行时累加器：只在记录日志时调用 .item()，避免每 step 发生 CPU-GPU 同步。
     running_total_loss = torch.zeros(1, device=device)
     running_main_loss = torch.zeros(1, device=device)
     running_object_loss = torch.zeros(1, device=device)
@@ -1196,7 +1190,7 @@ def train_loop(
     running_grad_norm = torch.zeros(1, device=device)
     running_data_time = 0.0
     running_compute_time = 0.0
-    # Cached values for progress bar (updated at log time, no per-step .item() sync)
+    # 进度条缓存值：在记录日志时更新，避免每 step .item() 同步。
     pb_loss = 0.0
     pb_main_loss = 0.0
     pb_object_loss = 0.0
@@ -1270,8 +1264,8 @@ def train_loop(
             if is_main:
                 logging.info(f"  Warmup step {warmup_step + 1}/{compile_warmup_steps} completed")
 
-        # Pre-compile the no_grad/eval specialization so the first real validation
-        # doesn't pay a ~2min dynamo recompile for the grad_mode guard change.
+        # 预编译 no_grad/eval specialization，避免第一次真实验证时
+        # 因 grad_mode guard 改变付出约 2 分钟的 dynamo recompile 开销。
         model.eval()
         with torch.no_grad():
             compute_batch_losses(
@@ -1466,7 +1460,7 @@ def train_loop(
                     current_lr,
                     start_time,
                 )
-                # Update progress bar cache (avoids per-step .item() sync)
+                # 更新进度条缓存，避免每 step .item() 同步。
                 pb_loss, pb_main_loss, pb_object_loss = avg_loss, avg_main_loss, avg_object_loss
                 if use_skill_loss and avg_skill_loss is not None:
                     pb_skill_loss = avg_skill_loss
@@ -1493,11 +1487,11 @@ def train_loop(
 
             data_start = time.time()
 
-    # Close progress bar
+    # 关闭进度条。
     if progress_bar is not None:
         progress_bar.close()
 
-    # Finish wandb run
+    # 结束 wandb run。
     if is_main and config.wandb_enabled:
         wandb.finish()
 
@@ -1510,13 +1504,13 @@ def main():
     def parse_optional_bool(value: str) -> bool:
         return value.lower() in ("true", "1", "yes")
 
-    # Parse command-line arguments for dynamic config overrides
+    # 解析命令行参数，用于动态覆盖 config。
     parser = argparse.ArgumentParser(
-        description="Override key ControlNet configurations from command line",
-        add_help=False,  # Don't add default help to avoid conflicts with tyro
+        description="从命令行覆盖关键 ControlNet 配置",
+        add_help=False,  # 不添加默认 help，避免与 tyro 冲突。
     )
 
-    # ControlNet-related arguments
+    # ControlNet 相关参数。
     parser.add_argument(
         "--control_net_enabled",
         type=parse_optional_bool,
@@ -1536,12 +1530,12 @@ def main():
         help="Weight for skill loss",
     )
 
-    # Dataset-related arguments
+    # 数据集相关参数。
     parser.add_argument(
         "--repo_id",
         type=str,
         default=None,
-        help="Repository ID for robotwin dataset (used to auto-generate paths)",
+        help="robotwin 数据集的 Repository ID（用于自动生成路径）",
     )
     parser.add_argument(
         "--local_root_dir",
@@ -1549,13 +1543,13 @@ def main():
         default=None,
         help="Local root directory for dataset (overrides config)",
     )
-    # Parse only the known overrides, leave the rest for tyro
+    # 只解析已知覆盖项，其余参数留给 tyro。
     overrides, remaining_args = parser.parse_known_args()
 
-    # Restore sys.argv to only contain remaining args for tyro processing
+    # 恢复 sys.argv，使其仅包含 tyro 需要处理的剩余参数。
     sys.argv = [sys.argv[0], *remaining_args]
 
-    # Load config using tyro (standard config loading)
+    # 使用 tyro 加载 config（标准 config 加载流程）。
     config = _config.cli()
 
     if overrides.control_net_enabled is not None:
@@ -1568,7 +1562,7 @@ def main():
         )
         logging.info(f"Model overrides applied: {{'control_attention_enabled': {overrides.control_net_enabled}}}")
 
-    # Dataset-related overrides need special handling since they're in data.base_config
+    # 数据集相关覆盖项位于 data.base_config 中，因此需要特殊处理。
     if overrides.repo_id is not None:
         config = dataclasses.replace(
             config,
@@ -1588,7 +1582,7 @@ def main():
         )
         logging.info(f"Dataset base_config overrides applied: {{'local_root_dir': '{local_root_dir}'}}")
 
-    # Pass loss weights separately to train_loop
+    # 将 loss 权重单独传给 train_loop。
     train_loop(config, lambda_object=overrides.lambda_object, lambda_skill=overrides.lambda_skill)
 
 

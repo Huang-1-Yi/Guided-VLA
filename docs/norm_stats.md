@@ -1,12 +1,12 @@
 # Normalization statistics
 
-Following common practice, our models normalize the proprioceptive state inputs and action targets during policy training and inference. The statistics used for normalization are computed over the training data and stored alongside the model checkpoint.
+按照常见做法，我们的模型会在 policy 训练和推理期间对 proprioceptive state inputs 和 action targets 进行归一化。用于归一化的统计量会在训练数据上计算，并与模型 checkpoint 一起保存。
 
-## Reloading normalization statistics
+## 重新加载 normalization statistics
 
-When you fine-tune one of our models on a new dataset, you need to decide whether to (A) reuse existing normalization statistics or (B) compute new statistics over your new training data. Which option is better for you depends on the similarity of your robot and task to the robot and task distribution in the pre-training dataset. Below, we list all the available pre-training normalization statistics for each model.
+当你在新数据集上微调我们的模型时，需要决定是（A）复用已有 normalization statistics，还是（B）在新的训练数据上重新计算统计量。哪种方式更适合，取决于你的机器人和任务与预训练数据集中机器人/任务分布的相似程度。下面列出了每个模型可用的预训练 normalization statistics。
 
-**If your target robot matches one of these pre-training statistics, consider reloading the same normalization statistics.** By reloading the normalization statistics, the actions in your dataset will be more "familiar" to the model, which can lead to better performance. You can reload the normalization statistics by adding an `AssetsConfig` to your training config that points to the corresponding checkpoint directory and normalization statistics ID, like below for the `Trossen` (aka ALOHA) robot statistics of the `pi0_base` checkpoint:
+**如果你的目标机器人匹配其中一组预训练统计量，可以考虑重新加载相同的 normalization statistics。** 通过重新加载这些统计量，你的数据集中的 actions 对模型来说会更“熟悉”，这可能带来更好的表现。可以在训练 config 中添加 `AssetsConfig`，让它指向对应 checkpoint 目录和 normalization statistics ID。下面示例使用 `pi0_base` checkpoint 中 `Trossen`（也就是 ALOHA）机器人的统计量：
 
 ```python
 TrainConfig(
@@ -21,16 +21,16 @@ TrainConfig(
 )
 ```
 
-For an example of a full training config that reloads normalization statistics, see the `pi0_aloha_pen_uncap` config in the [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py).
+完整训练 config 示例可参考 [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py) 中会重新加载 normalization statistics 的 `pi0_aloha_pen_uncap` config。
 
-**Note:** To successfully reload normalization statistics, it's important that your robot + dataset are following the action space definitions used in pre-training. We provide a detailed description of our action space definitions below.
+**注意：** 要成功重新加载 normalization statistics，你的机器人和数据集必须遵循预训练时使用的 action space 定义。下面会详细说明我们的 action space 定义。
 
-**Note #2:** Whether reloading normalization statistics is beneficial depends on the similarity of your robot and task to the robot and task distribution in the pre-training dataset. We recommend to always try both, reloading and training with a fresh set of statistics computed on your new dataset (see [main README](../README.md) for instructions on how to compute new statistics), and pick the one that works better for your task.
+**注意 #2：** 重新加载 normalization statistics 是否有益，取决于你的机器人和任务与预训练数据中机器人/任务分布的相似程度。我们建议始终同时尝试两种方式：一种是重新加载统计量，另一种是使用新数据集重新计算一套统计量进行训练（如何计算新统计量请见 [main README](../README.md)），最后选择对你的任务效果更好的方案。
 
+## 已提供的预训练 Normalization Statistics
 
-## Provided Pre-training Normalization Statistics
+下面列出了我们提供的全部预训练 normalization statistics。它们同时支持 `pi0_base` 和 `pi0_fast_base` 模型。对于 `pi0_base`，将 `assets_dir` 设为 `gs://openpi-assets/checkpoints/pi0_base/assets`；对于 `pi0_fast_base`，将 `assets_dir` 设为 `gs://openpi-assets/checkpoints/pi0_fast_base/assets`。
 
-Below is a list of all the pre-training normalization statistics we provide. We provide them for both, the `pi0_base` and `pi0_fast_base` models. For `pi0_base`, set the `assets_dir` to `gs://openpi-assets/checkpoints/pi0_base/assets` and for `pi0_fast_base`, set the `assets_dir` to `gs://openpi-assets/checkpoints/pi0_fast_base/assets`.
 | Robot | Description | Asset ID |
 |-------|-------------|----------|
 | ALOHA | 6-DoF dual arm robot with parallel grippers | trossen |
@@ -43,10 +43,10 @@ Below is a list of all the pre-training normalization statistics we provide. We 
 | ARX mobile | Mobile version of bi-manual ARX-5 robot arm setup mounted on a Slate base | arx_mobile |
 | Fibocom mobile | Fibocom mobile robot with 2x ARX-5 arms | fibocom_mobile |
 
-
 ## Pi0 Model Action Space Definitions
 
-Out of the box, both the `pi0_base` and `pi0_fast_base` use the following action space definitions (left and right are defined looking from behind the robot towards the workspace):
+默认情况下，`pi0_base` 和 `pi0_fast_base` 都使用以下 action space 定义；left 和 right 是从机器人后方朝工作空间方向观察时定义的：
+
 ```
     "dim_0:dim_5": "left arm joint angles",
     "dim_6": "left arm gripper position",
@@ -57,13 +57,14 @@ Out of the box, both the `pi0_base` and `pi0_fast_base` use the following action
     "dim_14:dim_15": "x-y base velocity (for mobile robots only)",
 ```
 
-The proprioceptive state uses the same definitions as the action space, except for the base x-y position (the last two dimensions) for mobile robots, which we don't include in the proprioceptive state.
+proprioceptive state 使用与 action space 相同的定义，但对于移动机器人，不包含 base x-y position，也就是最后两个维度。
 
-For 7-DoF robots (e.g. Franka), we use the first 7 dimensions of the action space for the joint actions, and the 8th dimension for the gripper action.
+对于 7-DoF 机器人（例如 Franka），我们使用 action space 的前 7 个维度表示 joint actions，第 8 个维度表示 gripper action。
 
-General info for Pi robots:
-- Joint angles are expressed in radians, with position zero corresponding to the zero position reported by each robot's interface library, except for ALOHA, where the standard ALOHA code uses a slightly different convention (see the [ALOHA example code](../examples/aloha_real/README.md) for details).
-- Gripper positions are in [0.0, 1.0], with 0.0 corresponding to fully open and 1.0 corresponding to fully closed.
-- Control frequencies are either 20 Hz for UR5e and Franka, and 50 Hz for ARX and Trossen (ALOHA) arms.
+Pi 系列机器人的通用说明：
 
-For DROID, we use the original DROID action configuration, with joint velocity actions in the first 7 dimensions and gripper actions in the 8th dimension + a control frequency of 15 Hz.
+- Joint angles 使用弧度表示，位置零点对应各机器人接口库报告的零位；ALOHA 例外，标准 ALOHA 代码使用略有不同的约定（详情见 [ALOHA example code](../examples/aloha_real/README.md)）。
+- Gripper positions 位于 `[0.0, 1.0]`，其中 0.0 表示完全打开，1.0 表示完全闭合。
+- Control frequency：UR5e 和 Franka 为 20 Hz，ARX 和 Trossen（ALOHA）机械臂为 50 Hz。
+
+对于 DROID，我们使用原始 DROID action 配置：前 7 个维度为 joint velocity actions，第 8 个维度为 gripper actions，控制频率为 15 Hz。

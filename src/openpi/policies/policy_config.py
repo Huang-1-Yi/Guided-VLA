@@ -23,29 +23,25 @@ def create_trained_policy(
     norm_stats: dict[str, transforms.NormStats] | None = None,
     pytorch_device: str | None = None,
 ) -> _policy.Policy:
-    """Create a policy from a trained checkpoint.
+    """从已训练的 checkpoint 创建 policy。
 
     Args:
-        train_config: The training config to use to create the model.
-        checkpoint_dir: The directory to load the model from.
-        repack_transforms: Optional transforms that will be applied before any other transforms.
-        sample_kwargs: The kwargs to pass to the `sample_actions` method. If not provided, the default
-            kwargs will be used.
-        default_prompt: The default prompt to use for the policy. Will inject the prompt into the input
-            data if it doesn't already exist.
-        norm_stats: The norm stats to use for the policy. If not provided, the norm stats will be loaded
-            from the checkpoint directory.
-        pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda", "cuda:0").
-                      If None and is_pytorch=True, will use "cuda" if available, otherwise "cpu".
+        train_config: 用于创建模型的训练配置。
+        checkpoint_dir: 加载模型的目录。
+        repack_transforms: 可选 transform，会在其他 transform 之前应用。
+        sample_kwargs: 传给 `sample_actions` 方法的 kwargs。未提供时使用默认 kwargs。
+        default_prompt: policy 使用的默认 prompt。如果输入数据里还没有 prompt，会自动注入。
+        norm_stats: policy 使用的 norm stats。未提供时，会从 checkpoint 目录加载。
+        pytorch_device: PyTorch 模型使用的设备，例如 "cpu"、"cuda"、"cuda:0"。
+                      若为 None 且 is_pytorch=True，则优先使用 "cuda"，不可用时使用 "cpu"。
 
     Note:
-        The function automatically detects whether the model is PyTorch-based by checking for the
-        presence of "model.safensors" in the checkpoint directory.
+        该函数会检查 checkpoint 目录中是否存在 "model.safetensors"，从而自动判断模型是否基于 PyTorch。
     """
     repack_transforms = repack_transforms or transforms.Group()
     checkpoint_dir = download.maybe_download(str(checkpoint_dir))
 
-    # Check if this is a PyTorch model by looking for model.safetensors
+    # 通过查找 model.safetensors 判断这是否是 PyTorch 模型。
     weight_path = os.path.join(checkpoint_dir, "model.safetensors")
     is_pytorch = os.path.exists(weight_path)
 
@@ -57,13 +53,13 @@ def create_trained_policy(
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
     if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
+        # 这里从 checkpoint 加载 norm stats，而不是从 config assets 目录加载，
+        # 以确保 policy 使用与原始训练过程一致的归一化统计量。
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
 
-    # Determine the device to use for PyTorch models
+    # 确定 PyTorch 模型使用的设备。
     if is_pytorch and pytorch_device is None:
         try:
             import torch

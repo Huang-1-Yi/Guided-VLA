@@ -1,4 +1,4 @@
-# GuidedVLA: PyTorch implementation of π₀/π₀.₅ extended with object/skill/depth head specialization.
+# GuidedVLA：pi0/pi05 的 PyTorch 实现，并扩展 object/skill/depth head specialization。
 # Paper: "GuidedVLA: Specifying Task-Relevant Factors via Plug-and-Play Action Attention Specialization" (RSS 2026)
 # Based on openpi (https://github.com/Physical-Intelligence/openpi).
 import logging
@@ -23,9 +23,9 @@ import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 
 
 def get_safe_dtype(target_dtype, device_type):
-    """Get a safe dtype for the given device type."""
+    """根据设备类型获取安全 dtype。"""
     if device_type == "cpu":
-        # CPU doesn't support bfloat16, use float32 instead
+        # CPU 不支持 bfloat16，因此改用 float32。
         if target_dtype == torch.bfloat16:
             return torch.float32
         if target_dtype == torch.float64:
@@ -36,7 +36,7 @@ def get_safe_dtype(target_dtype, device_type):
 def create_sinusoidal_pos_embedding(
     time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
 ) -> Tensor:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
+    """为标量位置计算 sine-cosine positional embedding 向量。"""
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
 
@@ -47,7 +47,7 @@ def create_sinusoidal_pos_embedding(
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
-    # Compute the outer product
+    # 计算外积。
     scaling_factor = 1.0 / period * 2 * math.pi
     sin_input = scaling_factor[None, :] * time[:, None]
     return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
@@ -57,10 +57,9 @@ _BETA_DIST_CACHE: dict = {}
 
 
 def sample_beta(alpha, beta, bsize, device):
-    # Cache the Beta distribution (and its on-device param tensors) per
-    # (alpha, beta, device). Constructing `torch.as_tensor(python_float, device='cuda')`
-    # every forward step emits as_tensor -> _to_copy -> copy_ -> cudaStreamSynchronize;
-    # caching removes that entirely on the hot path.
+    # 按 (alpha, beta, device) 缓存 Beta distribution（以及其设备上的参数 tensor）。
+    # 每个 forward step 构造 `torch.as_tensor(python_float, device='cuda')` 会触发
+    # as_tensor -> _to_copy -> copy_ -> cudaStreamSynchronize；缓存可以从热路径中完全移除这部分开销。
     key = (float(alpha), float(beta), device)
     dist = _BETA_DIST_CACHE.get(key)
     if dist is None:
@@ -72,25 +71,23 @@ def sample_beta(alpha, beta, bsize, device):
 
 
 def make_att_2d_masks(pad_masks, att_masks):
-    """Copied from big_vision.
+    """复制自 big_vision。
 
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
-    setup several types of attention, for example:
+    token 可以关注累计 mask_ar 小于或等于自身的有效输入 token。这样一来，
+    `mask_ar` int[B, N] 可用于设置多种 attention 类型，例如：
 
-      [[1 1 1 1 1 1]]: pure causal attention.
+      [[1 1 1 1 1 1]]: 纯 causal attention。
 
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
+      [[0 0 0 1 1 1]]: prefix-lm attention。前 3 个 token 彼此可见，
+          后 3 个 token 使用 causal attention。第一个元素也可以是 1，行为不变。
 
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
+      [[1 0 1 0 1 0 0 1 0 0]]: 4 个 block 之间的 causal attention。
+          一个 block 内的 token 可以关注所有前序 block，以及同一 block 内的所有 token。
 
     Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
-        it and 0 where it shares the same attention mask as the previous token.
+      input_mask: bool[B, N]，属于输入时为 true，padding 时为 false。
+      mask_ar: int32[B, N]，当先前 token 不能依赖当前位置时为 1；
+        当当前位置与前一个 token 共享同一 attention mask 时为 0。
     """
     if att_masks.ndim != 2:
         raise ValueError(att_masks.ndim)
@@ -1052,17 +1049,17 @@ class PI0Pytorch(nn.Module):
         time: Tensor | None = None,
         deterministic: bool = True,
     ) -> Tensor:
-        """Compute skill logits for inference.
+        """计算推理时使用的 skill logits。
 
-        This reuses the same attention outputs as the training-time skill loss
-        but does not require object targets or ground-truth skill ids.
+        这里复用训练时 skill loss 使用的同一组 attention 输出，
+        但不需要 object targets 或 ground-truth skill ids。
 
         Args:
-            observation: `Observation` object (already on correct device).
-            device: Torch device used for computation.
+            observation: `Observation` 对象（已在正确 device 上）。
+            device: 用于计算的 Torch device。
 
         Returns:
-            Tensor of shape [B, skill_num_classes] with unnormalized logits.
+            形状为 [B, skill_num_classes] 的未归一化 logits tensor。
         """
         if self.skill_head is None:
             raise RuntimeError(
@@ -1070,13 +1067,13 @@ class PI0Pytorch(nn.Module):
                 "Set config.use_skill_loss=True to enable skill logits."
             )
 
-        # Preprocess observation (no train-time augmentations).
+        # 预处理 observation（不使用训练时增强）。
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
         bsize = state.shape[0]
 
-        # Prepare actions for suffix tokens. If not provided, fall back to zeros
-        # (maintains the same token layout as training).
+        # 为 suffix tokens 准备 actions。如果未提供，则回退为全零，
+        # 以保持与训练相同的 token 布局。
         if actions is None:
             actions = torch.zeros(
                 bsize,

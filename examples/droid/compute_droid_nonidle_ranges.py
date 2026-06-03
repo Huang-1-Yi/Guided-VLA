@@ -1,16 +1,15 @@
 """
-Iterates through the DROID dataset and creates a json mapping from episode unique IDs to ranges of time steps
-that should be sampled during training (all others are filtered out).
+遍历 DROID 数据集，并创建一个 JSON 映射：从 episode 唯一 ID 到训练时应采样的时间步范围
+（其余时间步会被过滤）。
 
-Filtering logic:
-We look for ranges of consecutive steps that contain at most min_idle_len consecutive idle frames
-(default to 7 -- as most DROID action-chunking policies run the first 8 actions generated in each chunk, filtering
-this way means the policy will not get stuck outputting stationary actions). Additionally, we also only keep non-idle
-ranges of length at least min_non_idle_len (default to 16 frames = ~1 second), while also removing the last
-filter_last_n_in_ranges frames from the end of each range (as those all correspond to action chunks with many idle actions).
+过滤逻辑：
+寻找最多包含 min_idle_len 个连续静止帧的连续 step 区间（默认 7；因为多数 DROID action-chunking
+policy 会执行每个 chunk 里生成的前 8 个动作，这样过滤可以避免 policy 卡在持续输出静止动作）。
+此外，只保留长度至少为 min_non_idle_len 的非静止区间（默认 16 帧，约 1 秒），并从每个区间末尾移除
+filter_last_n_in_ranges 帧（这些帧通常对应包含大量静止动作的 action chunk）。
 
-This leaves us with trajectory segments consisting of contiguous, significant movement. Training on this filtered set
-yields policies that output fewer stationary actions (i.e., get "stuck" in states less).
+这样会留下由连续、显著运动组成的轨迹片段。用这个过滤后的集合训练，得到的 policy 会输出更少静止动作
+（也就是更不容易“卡住”）。
 """
 
 import json
@@ -22,10 +21,10 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tqdm import tqdm
 
-os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Set to the GPU you want to use, or leave empty for CPU
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # 设置为要使用的 GPU；如果留空则使用 CPU。
 
 builder = tfds.builder_from_directory(
-    # path to the `droid` directory (not its parent)
+    # `droid` 目录路径（不是它的父目录）。
     builder_dir="<path_to_droid_dataset_tfds_files>",
 )
 ds = builder.as_dataset(split="train", shuffle_files=False)
@@ -33,9 +32,9 @@ tf.data.experimental.ignore_errors(ds)
 
 keep_ranges_path = "<path_to_where_to_save_the_json>"
 
-min_idle_len = 7  # If more than this number of consecutive idle frames, filter all of them out
-min_non_idle_len = 16  # If fewer than this number of consecutive non-idle frames, filter all of them out
-filter_last_n_in_ranges = 10  # When using a filter dict, remove this many frames from the end of each range
+min_idle_len = 7  # 如果连续静止帧数量超过该值，则全部过滤。
+min_non_idle_len = 16  # 如果连续非静止帧数量少于该值，则全部过滤。
+filter_last_n_in_ranges = 10  # 使用 filter dict 时，从每个区间末尾移除这么多帧。
 
 keep_ranges_map = {}
 if Path(keep_ranges_path).exists():
@@ -58,16 +57,16 @@ for ep_idx, ep in enumerate(tqdm(ds)):
         [np.array([False]), np.all(np.abs(joint_velocities[1:] - joint_velocities[:-1]) < 1e-3, axis=1)]
     )
 
-    # Find what steps go from idle to non-idle and vice-versa
+    # 找出从静止到非静止、以及从非静止到静止的 step。
     is_idle_padded = np.concatenate(
         [[False], is_idle_array, [False]]
-    )  # Start and end with False, so idle at first step is a start of motion
+    )  # 首尾为 False，这样如果第一步是静止，也会被视为一段运动的开始。
 
     is_idle_diff = np.diff(is_idle_padded.astype(int))
-    is_idle_true_starts = np.where(is_idle_diff == 1)[0]  # +1 transitions --> going from idle to non-idle
-    is_idle_true_ends = np.where(is_idle_diff == -1)[0]  # -1 transitions --> going from non-idle to idle
+    is_idle_true_starts = np.where(is_idle_diff == 1)[0]  # +1 transition 表示从静止到非静止。
+    is_idle_true_ends = np.where(is_idle_diff == -1)[0]  # -1 transition 表示从非静止到静止。
 
-    # Find which steps correspond to idle segments of length at least min_idle_len
+    # 找出长度至少为 min_idle_len 的静止片段对应哪些 step。
     true_segment_masks = (is_idle_true_ends - is_idle_true_starts) >= min_idle_len
     is_idle_true_starts = is_idle_true_starts[true_segment_masks]
     is_idle_true_ends = is_idle_true_ends[true_segment_masks]
@@ -76,20 +75,20 @@ for ep_idx, ep in enumerate(tqdm(ds)):
     for start, end in zip(is_idle_true_starts, is_idle_true_ends, strict=True):
         keep_mask[start:end] = False
 
-    # Get all non-idle ranges of at least 16
-    # Same logic as above, but for keep_mask, allowing us to filter out contiguous ranges of length < min_non_idle_len
+    # 获取所有长度至少为 16 的非静止区间。
+    # 逻辑同上，但作用于 keep_mask，用来过滤长度小于 min_non_idle_len 的连续区间。
     keep_padded = np.concatenate([[False], keep_mask, [False]])
 
     keep_diff = np.diff(keep_padded.astype(int))
-    keep_true_starts = np.where(keep_diff == 1)[0]  # +1 transitions --> going from filter out to keep
-    keep_true_ends = np.where(keep_diff == -1)[0]  # -1 transitions --> going from keep to filter out
+    keep_true_starts = np.where(keep_diff == 1)[0]  # +1 transition 表示从过滤切换到保留。
+    keep_true_ends = np.where(keep_diff == -1)[0]  # -1 transition 表示从保留切换到过滤。
 
-    # Find which steps correspond to non-idle segments of length at least min_non_idle_len
+    # 找出长度至少为 min_non_idle_len 的非静止片段对应哪些 step。
     true_segment_masks = (keep_true_ends - keep_true_starts) >= min_non_idle_len
     keep_true_starts = keep_true_starts[true_segment_masks]
     keep_true_ends = keep_true_ends[true_segment_masks]
 
-    # Add mapping from episode unique ID key to list of non-idle ranges to keep
+    # 添加从 episode 唯一 ID key 到待保留非静止区间列表的映射。
     keep_ranges_map[key] = []
     for start, end in zip(keep_true_starts, keep_true_ends, strict=True):
         keep_ranges_map[key].append((int(start), int(end) - filter_last_n_in_ranges))

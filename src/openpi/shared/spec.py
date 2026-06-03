@@ -4,9 +4,12 @@ from typing import Any, TypedDict
 
 
 class ModuleSpec(TypedDict):
-    """A JSON-serializable representation of a function or class with some default args and kwargs to pass to it. Useful for specifying a particular class or function in a config file, while keeping it serializable and overridable from the command line using ml_collections.
+    """函数或类的 JSON 可序列化表示，可附带传给它的一些默认 args 和 kwargs。
 
-    Usage:
+    这适合在配置文件中指定某个类或函数，同时保持可序列化，并允许通过 ml_collections
+    从命令行覆盖。
+
+    用法：
 
         # Preferred way to create a spec:
         >>> from src.model.components.transformer import Transformer
@@ -19,13 +22,13 @@ class ModuleSpec(TypedDict):
         # can pass additional kwargs at instantiation time
         >>> transformer = ModuleSpec.instantiate(spec, num_heads=8)
 
-    Note: ModuleSpec is just an alias for a dictionary (that is strongly typed), not a real class. So from
-    your code's perspective, it is just a dictionary.
+    注意：ModuleSpec 只是一个带强类型标注的字典别名，不是真正的类。因此从代码角度看，
+    它就是一个普通字典。
 
-    module (str): The module the callable is located in
-    name (str): The name of the callable in the module
-    args (tuple): The args to pass to the callable
-    kwargs (dict): The kwargs to pass to the callable
+    module (str): callable 所在的模块
+    name (str): callable 在模块中的名称
+    args (tuple): 传给 callable 的 args
+    kwargs (dict): 传给 callable 的 kwargs
     """
 
     module: str
@@ -35,13 +38,13 @@ class ModuleSpec(TypedDict):
 
     @staticmethod
     def create(callable_or_full_name: str | callable, *args, **kwargs) -> "ModuleSpec":  # type: ignore
-        """Create a module spec from a callable or import string.
+        """从 callable 或导入字符串创建 module spec。
 
         Args:
-            callable_or_full_name (str or object): Either the object itself or a fully qualified import string
-                (e.g. "src.model.components.transformer:Transformer")
-        args (tuple, optional): Passed into callable upon instantiation.
-        kwargs (dict, optional): Passed into callable upon instantiation.
+            callable_or_full_name (str or object): 对象本身，或完整限定导入字符串
+                （例如 "src.model.components.transformer:Transformer"）。
+        args (tuple, optional): 实例化时传给 callable。
+        kwargs (dict, optional): 实例化时传给 callable。
         """
         if isinstance(callable_or_full_name, str):
             assert callable_or_full_name.count(":") == 1, (

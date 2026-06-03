@@ -8,7 +8,7 @@ from openpi_client.runtime import subscriber as _subscriber
 
 
 class Runtime:
-    """The core module orchestrating interactions between key components of the system."""
+    """协调系统关键组件交互的核心模块。"""
 
     def __init__(
         self,
@@ -30,25 +30,25 @@ class Runtime:
         self._episode_steps = 0
 
     def run(self) -> None:
-        """Runs the runtime loop continuously until stop() is called or the environment is done."""
+        """持续运行 runtime 循环，直到调用 stop() 或环境结束。"""
         for _ in range(self._num_episodes):
             self._run_episode()
 
-        # Final reset, this is important for real environments to move the robot to its home position.
+        # 最后再 reset 一次，这对真实环境很重要，可以让机器人回到 home position。
         self._environment.reset()
 
     def run_in_new_thread(self) -> threading.Thread:
-        """Runs the runtime loop in a new thread."""
+        """在新线程中运行 runtime 循环。"""
         thread = threading.Thread(target=self.run)
         thread.start()
         return thread
 
     def mark_episode_complete(self) -> None:
-        """Marks the end of an episode."""
+        """标记 episode 结束。"""
         self._in_episode = False
 
     def _run_episode(self) -> None:
-        """Runs a single episode."""
+        """运行单个 episode。"""
         logging.info("Starting episode...")
         self._environment.reset()
         self._agent.reset()
@@ -64,7 +64,7 @@ class Runtime:
             self._step()
             self._episode_steps += 1
 
-            # Sleep to maintain the desired frame rate
+            # 通过 sleep 维持期望帧率。
             now = time.time()
             dt = now - last_step_time
             if dt < step_time:
@@ -78,7 +78,7 @@ class Runtime:
             subscriber.on_episode_end()
 
     def _step(self) -> None:
-        """A single step of the runtime loop."""
+        """runtime 循环中的单步。"""
         observation = self._environment.get_observation()
         action = self._agent.get_action(observation)
         self._environment.apply_action(action)

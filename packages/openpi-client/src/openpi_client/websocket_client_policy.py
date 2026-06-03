@@ -10,9 +10,9 @@ from openpi_client import msgpack_numpy
 
 
 class WebsocketClientPolicy(_base_policy.BasePolicy):
-    """Implements the Policy interface by communicating with a server over websocket.
+    """通过 websocket 与服务器通信来实现 Policy 接口。
 
-    See WebsocketPolicyServer for a corresponding server implementation.
+    对应的服务器实现见 WebsocketPolicyServer。
     """
 
     def __init__(self, host: str = "0.0.0.0", port: Optional[int] = None, api_key: Optional[str] = None) -> None:
@@ -46,7 +46,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         self._ws.send(data)
         response = self._ws.recv()
         if isinstance(response, str):
-            # we're expecting bytes; if the server sends a string, it's an error.
+            # 这里期望收到 bytes；如果服务器发送字符串，则表示出错。
             raise RuntimeError(f"Error in inference server:\n{response}")
         return msgpack_numpy.unpackb(response)
 

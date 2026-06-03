@@ -29,7 +29,7 @@ import openpi.training.weight_loaders as _weight_loaders
 
 
 def init_logging():
-    """Custom logging format for better readability."""
+    """自定义日志格式，提升可读性。"""
     level_mapping = {"DEBUG": "D", "INFO": "I", "WARNING": "W", "ERROR": "E", "CRITICAL": "C"}
 
     class CustomFormatter(logging.Formatter):
@@ -71,11 +71,11 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
 
 
 def _load_weights_and_validate(loader: _weight_loaders.WeightLoader, params_shape: at.Params) -> at.Params:
-    """Loads and validates the weights. Returns a loaded subset of the weights."""
+    """加载并校验权重，返回成功加载的权重子集。"""
     loaded_params = loader.load(params_shape)
     at.check_pytree_equality(expected=params_shape, got=loaded_params, check_shapes=True, check_dtypes=True)
 
-    # Remove jax.ShapeDtypeStruct from the loaded params. This makes sure that only the loaded params are returned.
+    # 从已加载参数中移除 jax.ShapeDtypeStruct，确保只返回真正加载到的参数。
     return traverse_util.unflatten_dict(
         {k: v for k, v in traverse_util.flatten_dict(loaded_params).items() if not isinstance(v, jax.ShapeDtypeStruct)}
     )
@@ -89,18 +89,18 @@ def init_train_state(
 
     def init(rng: at.KeyArrayLike, partial_params: at.Params | None = None) -> training_utils.TrainState:
         rng, model_rng = jax.random.split(rng)
-        # initialize the model (and its parameters).
+        # 初始化模型及其参数。
         model = config.model.create(model_rng)
 
-        # Merge the partial params into the model.
+        # 将 partial params 合并到模型中。
         if partial_params is not None:
             graphdef, state = nnx.split(model)
-            # This will produce an error if the partial params are not a subset of the state.
+            # 如果 partial params 不是 state 的子集，这里会产生错误。
             state.replace_by_pure_dict(partial_params)
             model = nnx.merge(graphdef, state)
 
         params = nnx.state(model)
-        # Convert frozen params to bfloat16.
+        # 将冻结参数转换为 bfloat16。
         params = nnx_utils.state_map(params, config.freeze_filter, lambda p: p.replace(p.value.astype(jnp.bfloat16)))
 
         return training_utils.TrainState(
@@ -122,10 +122,10 @@ def init_train_state(
     partial_params = _load_weights_and_validate(config.weight_loader, train_state_shape.params.to_pure_dict())
     replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
-    # Initialize the train state and mix in the partial params.
+    # 初始化 train state，并混入 partial params。
     train_state = jax.jit(
         init,
-        donate_argnums=(1,),  # donate the partial params buffer.
+        donate_argnums=(1,),  # 捐赠 partial params buffer。
         in_shardings=replicated_sharding,
         out_shardings=state_sharding,
     )(init_rng, partial_params)
@@ -153,7 +153,7 @@ def train_step(
     train_rng = jax.random.fold_in(rng, state.step)
     observation, actions = batch
 
-    # Filter out frozen params.
+    # 过滤掉冻结参数。
     diff_state = nnx.DiffState(0, config.trainable_filter)
     loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(model, train_rng, observation, actions)
 
@@ -161,7 +161,7 @@ def train_step(
     updates, new_opt_state = state.tx.update(grads, state.opt_state, params)
     new_params = optax.apply_updates(params, updates)
 
-    # Update the model in place and return the new full state.
+    # 原地更新模型，并返回新的完整 state。
     nnx.update(model, new_params)
     new_params = nnx.state(model)
 
@@ -174,7 +174,7 @@ def train_step(
             ),
         )
 
-    # Filter out params that aren't kernels.
+    # 过滤掉不是 kernels 的参数。
     kernel_params = nnx.state(
         model,
         nnx.All(
@@ -226,7 +226,7 @@ def main(config: _config.TrainConfig):
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
 
-    # Log images from first batch to sanity check.
+    # 记录第一个 batch 的图像，用于快速 sanity check。
     images_to_log = [
         wandb.Image(np.concatenate([np.array(img[i]) for img in batch[0].images.values()], axis=1))
         for i in range(min(5, len(next(iter(batch[0].images.values())))))

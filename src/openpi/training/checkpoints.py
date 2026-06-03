@@ -52,9 +52,8 @@ def initialize_checkpoint_dir(
         ),
     )
 
-    # Special case: the checkpoint directory exists and the user requests to resume training, but the training run did
-    # not get to the first checkpoint saved. In this case, we don't actually want the train script to try and restore a
-    # checkpoint, since it will fail.
+    # 特殊情况：checkpoint 目录已存在，用户请求恢复训练，但上一次训练尚未保存第一个 checkpoint。
+    # 这种情况下不应让训练脚本尝试恢复 checkpoint，因为它会失败。
     if resuming and tuple(mngr.all_steps()) in [(), (0,)]:
         logging.info("Checkpoint directory exists, but does not contain any checkpoints. Aborting resume.")
         resuming = False
@@ -69,13 +68,13 @@ def save_state(
     step: int,
 ):
     def save_assets(directory: epath.Path):
-        # Save the normalization stats.
+        # 保存归一化统计量。
         data_config = data_loader.data_config()
         norm_stats = data_config.norm_stats
         if norm_stats is not None and data_config.asset_id is not None:
             _normalize.save(directory / data_config.asset_id, norm_stats)
 
-    # Split params that can be used for inference into a separate item.
+    # 将可用于推理的 params 拆成单独 item。
     with at.disable_typechecking():
         train_state, params = _split_params(state)
     items = {
@@ -95,7 +94,7 @@ def restore_state(
     del data_loader
 
     with at.disable_typechecking():
-        # Split params that can be used for inference into a separate item.
+        # 将可用于推理的 params 拆成单独 item。
         train_state, params = _split_params(state)
         restored = checkpoint_manager.restore(
             step,
@@ -119,7 +118,7 @@ class Callback(Protocol):
 
 
 class CallbackHandler(ocp.AsyncCheckpointHandler):
-    """A CheckpointHandler for calling an arbitrary function asynchronously. Only for saving, not for restoring."""
+    """用于异步调用任意函数的 CheckpointHandler。仅用于保存，不用于恢复。"""
 
     def save(self, directory: epath.Path, args: CallbackSave):
         if jax.process_index() == 0:
@@ -153,7 +152,7 @@ def _split_params(state: training_utils.TrainState) -> tuple[training_utils.Trai
 
 
 def _merge_params(train_state: training_utils.TrainState, params: dict[str, at.Params]) -> training_utils.TrainState:
-    # Revert the logic inside `_split_params`. Assumes that existence of `params` means that EMA params were used during the split.
+    # 还原 `_split_params` 内部逻辑。这里假设 `params` 存在表示拆分时使用了 EMA params。
     if train_state.params:
         return dataclasses.replace(train_state, ema_params=params["params"])
     return dataclasses.replace(train_state, params=params["params"])

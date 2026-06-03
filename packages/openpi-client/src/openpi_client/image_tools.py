@@ -3,9 +3,9 @@ from PIL import Image
 
 
 def convert_to_uint8(img: np.ndarray) -> np.ndarray:
-    """Converts an image to uint8 if it is a float image.
+    """如果图像是 float 类型，则转换为 uint8。
 
-    This is important for reducing the size of the image when sending it over the network.
+    这对降低网络传输图像时的数据大小很重要。
     """
     if np.issubdtype(img.dtype, np.floating):
         img = (255 * img).astype(np.uint8)
@@ -13,18 +13,18 @@ def convert_to_uint8(img: np.ndarray) -> np.ndarray:
 
 
 def resize_with_pad(images: np.ndarray, height: int, width: int, method=Image.BILINEAR) -> np.ndarray:
-    """Replicates tf.image.resize_with_pad for multiple images using PIL. Resizes a batch of images to a target height.
+    """用 PIL 为多张图像复现 tf.image.resize_with_pad，将一批图像缩放到目标高度。
 
     Args:
-        images: A batch of images in [..., height, width, channel] format.
-        height: The target height of the image.
-        width: The target width of the image.
-        method: The interpolation method to use. Default is bilinear.
+        images: 格式为 [..., height, width, channel] 的一批图像。
+        height: 图像目标高度。
+        width: 图像目标宽度。
+        method: 使用的插值方法，默认为 bilinear。
 
     Returns:
-        The resized images in [..., height, width, channel].
+        格式为 [..., height, width, channel] 的缩放后图像。
     """
-    # If the images are already the correct size, return them as is.
+    # 如果图像已经是正确尺寸，则直接返回。
     if images.shape[-3:-1] == (height, width):
         return images
 
@@ -36,14 +36,14 @@ def resize_with_pad(images: np.ndarray, height: int, width: int, method=Image.BI
 
 
 def _resize_with_pad_pil(image: Image.Image, height: int, width: int, method: int) -> Image.Image:
-    """Replicates tf.image.resize_with_pad for one image using PIL. Resizes an image to a target height and
-    width without distortion by padding with zeros.
+    """用 PIL 为单张图像复现 tf.image.resize_with_pad。
 
-    Unlike the jax version, note that PIL uses [width, height, channel] ordering instead of [batch, h, w, c].
+    通过零填充把图像无失真地缩放到目标高宽。注意，不同于 jax 版本，
+    PIL 使用 [width, height, channel] 顺序，而不是 [batch, h, w, c]。
     """
     cur_width, cur_height = image.size
     if cur_width == width and cur_height == height:
-        return image  # No need to resize if the image is already the correct size.
+        return image  # 如果图像已经是正确尺寸，则无需缩放。
 
     ratio = max(cur_width / width, cur_height / height)
     resized_height = int(cur_height / ratio)

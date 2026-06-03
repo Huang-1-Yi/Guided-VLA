@@ -5,7 +5,7 @@ from openpi_client.runtime import agent as _agent
 
 
 class PolicyAgent(_agent.Agent):
-    """An agent that uses a policy to determine actions."""
+    """使用 policy 决定动作的 agent。"""
 
     def __init__(self, policy: _base_policy.BasePolicy) -> None:
         self._policy = policy

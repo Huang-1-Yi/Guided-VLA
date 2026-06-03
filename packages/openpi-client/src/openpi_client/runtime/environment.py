@@ -2,31 +2,30 @@ import abc
 
 
 class Environment(abc.ABC):
-    """An Environment represents the robot and the environment it inhabits.
+    """Environment 表示机器人及其所处环境。
 
-    The primary contract of environments is that they can be queried for observations
-    about their state, and have actions applied to them to change that state.
+    Environment 的主要契约是：可以查询其状态观测，也可以向其施加动作以改变状态。
     """
 
     @abc.abstractmethod
     def reset(self) -> None:
-        """Reset the environment to its initial state.
+        """将环境重置到初始状态。
 
-        This will be called once before starting each episode.
+        每个 episode 开始前会调用一次。
         """
 
     @abc.abstractmethod
     def is_episode_complete(self) -> bool:
-        """Allow the environment to signal that the episode is complete.
+        """允许环境发出 episode 已结束的信号。
 
-        This will be called after each step. It should return `True` if the episode is
-        complete (either successfully or unsuccessfully), and `False` otherwise.
+        每一步之后都会调用。如果 episode 已结束（无论成功或失败）应返回 `True`，
+        否则返回 `False`。
         """
 
     @abc.abstractmethod
     def get_observation(self) -> dict:
-        """Query the environment for the current state."""
+        """查询环境当前状态。"""
 
     @abc.abstractmethod
     def apply_action(self, action: dict) -> None:
-        """Take an action in the environment."""
+        """在环境中执行一个动作。"""

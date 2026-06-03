@@ -13,7 +13,7 @@ from openpi.training import config as _config
 
 
 class EnvMode(enum.Enum):
-    """Supported environments."""
+    """支持的环境。"""
 
     ALOHA = "aloha"
     ALOHA_SIM = "aloha_sim"
@@ -24,7 +24,7 @@ class EnvMode(enum.Enum):
 
 @dataclasses.dataclass
 class Checkpoint:
-    """Load a policy from a trained checkpoint."""
+    """从已训练的 checkpoint 加载 policy。"""
 
     config: str
     dir: str
@@ -32,12 +32,12 @@ class Checkpoint:
 
 @dataclasses.dataclass
 class Default:
-    """Use the default policy for the given environment."""
+    """使用指定环境的默认 policy。"""
 
 
 @dataclasses.dataclass
 class Args:
-    """Arguments for the serve_policy script."""
+    """serve_policy 脚本的参数。"""
 
     env: EnvMode = EnvMode.ALOHA_SIM
     default_prompt: str | None = None
@@ -74,7 +74,7 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 
 
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
-    """Create a default policy for the given environment."""
+    """为指定环境创建默认 policy。"""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
         return _policy_config.create_trained_policy(
             _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
@@ -83,7 +83,7 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
 
 
 def create_policy(args: Args) -> _policy.Policy:
-    """Create a policy from the given arguments."""
+    """根据给定参数创建 policy。"""
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(

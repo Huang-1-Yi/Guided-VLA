@@ -2,16 +2,15 @@ import abc
 
 
 class Agent(abc.ABC):
-    """An Agent is the thing with agency, i.e. the entity that makes decisions.
+    """Agent 是具备决策能力的实体。
 
-    Agents receive observations about the state of the world, and return actions
-    to take in response.
+    Agent 接收关于世界状态的观测，并返回相应要执行的动作。
     """
 
     @abc.abstractmethod
     def get_action(self, observation: dict) -> dict:
-        """Query the agent for the next action."""
+        """向 agent 查询下一个动作。"""
 
     @abc.abstractmethod
     def reset(self) -> None:
-        """Reset the agent to its initial state."""
+        """将 agent 重置到初始状态。"""

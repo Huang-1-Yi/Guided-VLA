@@ -1,15 +1,15 @@
-"""Adds NumPy array support to msgpack.
+"""为 msgpack 增加 NumPy array 支持。
 
-msgpack is good for (de)serializing data over a network for multiple reasons:
-- msgpack is secure (as opposed to pickle/dill/etc which allow for arbitrary code execution)
-- msgpack is widely used and has good cross-language support
-- msgpack does not require a schema (as opposed to protobuf/flatbuffers/etc) which is convenient in dynamically typed
-    languages like Python and JavaScript
-- msgpack is fast and efficient (as opposed to readable formats like JSON/YAML/etc); I found that msgpack was ~4x faster
-    than pickle for serializing large arrays using the below strategy
+msgpack 适合在网络上序列化/反序列化数据，原因包括：
+- msgpack 更安全（不同于 pickle/dill 等允许任意代码执行的格式）
+- msgpack 使用广泛，并且有良好的跨语言支持
+- msgpack 不需要 schema（不同于 protobuf/flatbuffers 等），这对 Python 和 JavaScript
+    这样的动态类型语言很方便
+- msgpack 快速且高效（不同于 JSON/YAML 等可读格式）；使用下面的策略序列化大 array 时，
+    我观察到 msgpack 大约比 pickle 快 4 倍
 
-The code below is adapted from https://github.com/lebedov/msgpack-numpy. The reason not to use that library directly is
-that it falls back to pickle for object arrays.
+下面的代码改编自 https://github.com/lebedov/msgpack-numpy。没有直接使用该库的原因是：
+它会在处理 object array 时回退到 pickle。
 """
 
 import functools

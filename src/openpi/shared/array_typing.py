@@ -22,12 +22,12 @@ from jaxtyping import jaxtyped
 import jaxtyping._decorator
 import torch
 
-# patch jaxtyping to handle https://github.com/patrick-kidger/jaxtyping/issues/277.
-# the problem is that custom PyTree nodes are sometimes initialized with arbitrary types (e.g., `jax.ShapeDtypeStruct`,
-# `jax.Sharding`, or even <object>) due to JAX tracing operations. this patch skips typechecking when the stack trace
-# contains `jax._src.tree_util`, which should only be the case during tree unflattening.
+# 为了处理 https://github.com/patrick-kidger/jaxtyping/issues/277，这里对 jaxtyping 打补丁。
+# 问题在于 JAX tracing 操作有时会用任意类型（例如 `jax.ShapeDtypeStruct`、`jax.Sharding`，甚至
+# <object>）初始化自定义 PyTree 节点。这个补丁会在调用栈包含 `jax._src.tree_util` 时跳过类型检查；
+# 这种情况应该只会发生在 tree unflattening 过程中。
 _original_check_dataclass_annotations = jaxtyping._decorator._check_dataclass_annotations  # noqa: SLF001
-# Redefine Array to include both JAX arrays and PyTorch tensors
+# 重新定义 Array，使其同时包含 JAX array 和 PyTorch tensor。
 Array = jax.Array | torch.Tensor
 
 
@@ -48,7 +48,7 @@ Params: TypeAlias = PyTree[Float[ArrayLike, "..."]]
 T = TypeVar("T")
 
 
-# runtime type-checking decorator
+# 运行时类型检查装饰器。
 def typecheck(t: T) -> T:
     return cast(T, ft.partial(jaxtyped, typechecker=beartype.beartype)(t))
 
@@ -62,8 +62,9 @@ def disable_typechecking():
 
 
 def check_pytree_equality(*, expected: PyTree, got: PyTree, check_shapes: bool = False, check_dtypes: bool = False):
-    """Checks that two PyTrees have the same structure and optionally checks shapes and dtypes. Creates a much nicer
-    error message than if `jax.tree.map` is naively used on PyTrees with different structures.
+    """检查两个 PyTree 是否具有相同结构，并可选检查 shape 和 dtype。
+
+    与直接在结构不同的 PyTree 上使用 `jax.tree.map` 相比，这里会生成更友好的错误信息。
     """
 
     if errors := list(private_tree_util.equality_errors(expected, got)):

@@ -30,7 +30,7 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
-# Currently only for bridge_dataset
+# 目前仅用于 bridge_dataset。
 @dataclasses.dataclass(frozen=True)
 class OXEInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
@@ -84,5 +84,5 @@ class OXEInputs(transforms.DataTransformFn):
 @dataclasses.dataclass(frozen=True)
 class OXEOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
-        # Only return the first 7 dims.
+        # 只返回前 7 维。
         return {"actions": np.asarray(data["actions"][:, :7])}

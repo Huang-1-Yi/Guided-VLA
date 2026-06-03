@@ -35,18 +35,18 @@ class Policy(BasePolicy):
         pytorch_device: str = "cpu",
         is_pytorch: bool = False,
     ):
-        """Initialize the Policy.
+        """初始化 Policy。
 
         Args:
-            model: The model to use for action sampling.
-            rng: Random number generator key for JAX models. Ignored for PyTorch models.
-            transforms: Input data transformations to apply before inference.
-            output_transforms: Output data transformations to apply after inference.
-            sample_kwargs: Additional keyword arguments to pass to model.sample_actions.
-            metadata: Additional metadata to store with the policy.
-            pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda:0").
-                          Only relevant when is_pytorch=True.
-            is_pytorch: Whether the model is a PyTorch model. If False, assumes JAX model.
+            model: 用于 action sampling 的模型。
+            rng: JAX 模型使用的随机数生成器 key。PyTorch 模型会忽略该参数。
+            transforms: 推理前应用的输入数据 transformations。
+            output_transforms: 推理后应用的输出数据 transformations。
+            sample_kwargs: 传给 model.sample_actions 的额外关键字参数。
+            metadata: 随 policy 一起保存的额外 metadata。
+            pytorch_device: PyTorch 模型使用的设备，例如 "cpu"、"cuda:0"。
+                          仅当 is_pytorch=True 时相关。
+            is_pytorch: 模型是否为 PyTorch 模型。若为 False，则视为 JAX 模型。
         """
         self._model = model
         self._input_transform = _transforms.compose(transforms)
@@ -61,44 +61,43 @@ class Policy(BasePolicy):
             self._model.eval()
             self._sample_actions = model.sample_actions
         else:
-            # JAX model setup
+            # JAX 模型设置。
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
             self._rng = rng or jax.random.key(0)
 
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
-        # Make a copy since transformations may modify the inputs in place.
+        # 复制一份，因为 transformations 可能会原地修改输入。
         inputs = jax.tree.map(lambda x: x, obs)
         inputs = self._input_transform(inputs)
         if not self._is_pytorch_model:
-            # Make a batch and convert to jax.Array.
+            # 构造 batch 并转换为 jax.Array。
             inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
             self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
         else:
-            # Convert inputs to PyTorch tensors and move to correct device.
-            # Use np.ascontiguousarray to avoid unnecessary copies when input is already numpy.
+            # 将输入转换为 PyTorch tensors，并移动到正确设备。
+            # 当输入已经是 numpy 时，使用 np.ascontiguousarray 避免不必要的拷贝。
             inputs = jax.tree.map(
                 lambda x: torch.as_tensor(np.ascontiguousarray(x)).to(self._pytorch_device)[None, ...], inputs
             )
             sample_rng_or_pytorch_device = self._pytorch_device
 
-        # Prepare kwargs for sample_actions.
+        # 准备传给 sample_actions 的 kwargs。
         sample_kwargs = dict(self._sample_kwargs)
         if noise is not None:
             noise = torch.from_numpy(noise).to(self._pytorch_device) if self._is_pytorch_model else jnp.asarray(noise)
 
-            if noise.ndim == 2:  # If noise is (action_horizon, action_dim), add batch dimension.
-                noise = noise[None, ...]  # Make it (1, action_horizon, action_dim).
+            if noise.ndim == 2:  # 若 noise 是 (action_horizon, action_dim)，则添加 batch 维度。
+                noise = noise[None, ...]  # 转为 (1, action_horizon, action_dim)。
             sample_kwargs["noise"] = noise
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
 
         _inference_ctx = torch.inference_mode() if self._is_pytorch_model else _nullcontext()
-        # When torch.compile uses CUDAGraphs (mode="reduce-overhead"), tensor output buffers
-        # from a previous run can be overwritten by the next run. Calling
-        # cudagraph_mark_step_begin() before each invocation tells CUDAGraphs that a new
-        # independent step is starting, preventing stale-buffer errors.
+        # 当 torch.compile 使用 CUDAGraphs（mode="reduce-overhead"）时，上一次运行的 tensor 输出 buffer
+        # 可能被下一次运行覆盖。每次调用前执行 cudagraph_mark_step_begin() 可告知 CUDAGraphs
+        # 一个新的独立 step 即将开始，从而避免 stale-buffer 错误。
         if (
             self._is_pytorch_model
             and hasattr(torch, "compiler")
@@ -113,7 +112,7 @@ class Policy(BasePolicy):
 
         model_time = time.monotonic() - start_time
 
-        # Convert outputs to numpy.
+        # 将输出转换为 numpy。
         if self._is_pytorch_model:
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
         else:
@@ -132,7 +131,7 @@ class Policy(BasePolicy):
 
 
 class PolicyRecorder(_base_policy.BasePolicy):
-    """Records the policy's behavior to disk."""
+    """将 policy 行为记录到磁盘。"""
 
     def __init__(self, policy: _base_policy.BasePolicy, record_dir: str):
         self._policy = policy

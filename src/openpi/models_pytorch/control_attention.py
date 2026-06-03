@@ -1,15 +1,15 @@
-# GuidedVLA addition: ControlNet-style dual-branch attention for plug-and-play action head specialization.
-# Paper: "GuidedVLA: Specifying Task-Relevant Factors via Plug-and-Play Action Attention Specialization" (RSS 2026)
+# GuidedVLA 新增：ControlNet 风格双分支 attention，用于 plug-and-play action head specialization。
+# 论文："GuidedVLA: Specifying Task-Relevant Factors via Plug-and-Play Action Attention Specialization" (RSS 2026)
 """
-ControlNet-inspired Attention Module for Pi0 Model.
+受 ControlNet 启发的 Pi0 模型 Attention 模块。
 
-Architecture:
-- Origin branch: pretrained PaliGemma/Gemma attention (optionally frozen)
-- Control branch: lightweight branch with num_control_heads heads + optional headwise gate
-- Fusion: zero_conv (ControlNet design) — origin + zero_conv(branch_output)
+架构：
+- Origin branch：预训练 PaliGemma/Gemma attention（可选冻结）
+- Control branch：带 num_control_heads 个 head 的轻量分支，以及可选 headwise gate
+- Fusion：zero_conv（ControlNet 设计），即 origin + zero_conv(branch_output)
 
-The headwise gate is predicted from the control branch's Q projection,
-then applied to the control branch SDPA output before o_proj.
+headwise gate 由 control branch 的 Q projection 预测，并在 o_proj 之前应用到
+control branch 的 SDPA 输出。
 """
 
 from collections.abc import Sequence
@@ -22,11 +22,10 @@ from torch import nn
 
 class ControlAwareAttention(nn.Module):
     """
-    ControlNet-style attention wrapper with trainable origin and control branches.
+    带可训练 origin/control 分支的 ControlNet 风格 attention wrapper。
 
-    Fusion mode: zero_conv — output = origin_output + zero_conv(branch_output)
-    The zero_conv is zero-initialized so the branch starts with zero contribution,
-    matching the standard ControlNet initialization strategy.
+    融合模式：zero_conv，即 output = origin_output + zero_conv(branch_output)。
+    zero_conv 采用零初始化，因此该分支初始贡献为零，与标准 ControlNet 初始化策略一致。
     """
 
     @staticmethod
@@ -81,21 +80,21 @@ class ControlAwareAttention(nn.Module):
     ):
         super().__init__()
 
-        # Get device/dtype from original attention layer
+        # 从原始 attention layer 获取 device/dtype。
         device = next(original_attn.parameters()).device
         dtype = next(original_attn.parameters()).dtype
 
-        # Origin branch — participates in training with main_loss gradients
+        # Origin branch：参与训练并接收 main_loss 梯度。
         self.origin = original_attn
 
-        # Store configuration
+        # 保存配置。
         self.config = original_attn.config
         self.layer_idx = original_attn.layer_idx
         self.num_control_heads = num_control_heads
         self.copy_weights = copy_weights
         self.freeze_origin = freeze_origin
 
-        # Get original attention dimensions
+        # 获取原始 attention 维度。
         num_heads = self.config.num_attention_heads
         head_dim = original_attn.head_dim
         initializer_std = float(getattr(self.config, "initializer_range", 0.02))
@@ -104,9 +103,9 @@ class ControlAwareAttention(nn.Module):
         self.use_headwise_gate = bool(use_headwise_gate)
         self.gate_num_heads = num_heads
 
-        # Determine control branch dimensions
+        # 确定 control branch 维度。
         if num_control_heads is None or copy_weights:
-            # Full copy mode: copy all weights from original
+            # full copy 模式：从 original 复制所有权重。
             self.object_branch = copy.deepcopy(original_attn).to(device=device, dtype=dtype)
             self.num_control_heads = num_heads
             control_hidden_size = self.num_control_heads * head_dim
@@ -122,11 +121,11 @@ class ControlAwareAttention(nn.Module):
                     copy_query_from=self.object_branch.q_proj,
                 )
         else:
-            # Clone config with reduced head count
+            # 克隆 config，并减少 head 数量。
             control_config = copy.deepcopy(self.config)
             control_config.num_attention_heads = num_control_heads
 
-            # Use the same attention class as the original
+            # 使用与 original 相同的 attention class。
             attention_class = type(original_attn)
             self.object_branch = attention_class(control_config, layer_idx=self.layer_idx).to(
                 device=device, dtype=dtype
@@ -134,9 +133,9 @@ class ControlAwareAttention(nn.Module):
 
             control_hidden_size = num_control_heads * head_dim  # e.g., 2 * 256 = 512
 
-            # Optional headwise gate on the control branch Q projection.
-            # Gate dims equal origin num_heads (not control heads) so each origin
-            # head gets its own gate scalar.
+            # control branch Q projection 上的可选 headwise gate。
+            # gate 维度等于 origin num_heads（不是 control heads），因此每个 origin head
+            # 都有自己的 gate scalar。
             if self.use_headwise_gate:
                 self._replace_q_proj_with_headwise_gate(
                     self.object_branch,
@@ -148,28 +147,28 @@ class ControlAwareAttention(nn.Module):
                     initializer_std=initializer_std,
                 )
 
-            # Re-initialize control branch with small random values;
-            # projection biases are zero, so gate logits are centered near 0.
+            # 使用较小随机值重新初始化 control branch。
+            # projection biases 为零，因此 gate logits 以 0 附近为中心。
             for name, param in self.object_branch.named_parameters():
                 if "proj" in name and param.ndim == 2:
                     nn.init.normal_(param, mean=0.0, std=initializer_std)
                 elif "proj" in name and param.ndim == 1:
                     nn.init.zeros_(param)
 
-        # Ensure control branch parameters are trainable
+        # 确保 control branch 参数可训练。
         for param in self.object_branch.parameters():
             param.requires_grad = True
         if self.freeze_origin:
             for param in self.origin.parameters():
                 param.requires_grad = False
 
-        # Zero-initialized linear projection for ControlNet-style fusion
+        # 用于 ControlNet 风格融合的零初始化 linear projection。
         self.zero_conv = nn.Linear(hidden_size, hidden_size, bias=True, device=device, dtype=dtype)
         nn.init.zeros_(self.zero_conv.weight)
         nn.init.zeros_(self.zero_conv.bias)
 
-        # Q-head expansion layer: expand control branch Q heads to match origin heads
-        # Only needed when control has fewer heads than origin (e.g., 2 heads -> 8 heads)
+        # Q-head expansion layer：扩展 control branch 的 Q heads，使其匹配 origin heads。
+        # 仅当 control heads 少于 origin heads 时需要（例如 2 heads -> 8 heads）。
         origin_num_heads = num_heads
         control_q_heads = self.num_control_heads if self.num_control_heads is not None else num_heads
 
@@ -182,7 +181,7 @@ class ControlAwareAttention(nn.Module):
             nn.init.normal_(self.q_expand_linear.weight, mean=0.0, std=initializer_std)
             nn.init.zeros_(self.q_expand_linear.bias)
 
-            # Re-initialize the o_proj of the control branch to match expanded head count
+            # 重新初始化 control branch 的 o_proj，使其匹配扩展后的 head 数量。
             self.object_branch.o_proj = nn.Linear(
                 origin_hidden_dim,
                 self.config.hidden_size,
@@ -203,7 +202,7 @@ class ControlAwareAttention(nn.Module):
         freeze_str = ", frozen_origin" if self.freeze_origin else ""
         logging.info(f"Created ControlAwareAttention for layer {self.layer_idx} [{mode_str}, zero_conv{freeze_str}]")
 
-    # Compatibility properties for transformers library (delegates to control branch)
+    # transformers library 兼容属性（委托给 control branch）。
     @property
     def q_proj(self):
         return self.object_branch.q_proj
@@ -229,12 +228,12 @@ class ControlAwareAttention(nn.Module):
         return self.object_branch.scaling
 
     def get_q_expand_linear(self):
-        """Get Q expansion linear layer if available (for expanding 2->8 heads)."""
+        """获取可用的 Q expansion linear layer（用于 2->8 heads 扩展）。"""
         return self.q_expand_linear if self.has_q_expansion else None
 
-    # NOTE: forward() is NOT called in dual-path ControlNet mode
+    # 注意：dual-path ControlNet 模式不会调用 forward()。
     def forward(self, *args, **kwargs):
-        """Fallback to the origin attention for compatibility."""
+        """为了兼容性，回退到 origin attention。"""
         return self.origin(*args, **kwargs)
 
     def compute_dual_path_qkv(
@@ -246,13 +245,13 @@ class ControlAwareAttention(nn.Module):
         torch.Tensor | None,  # q_branch_gate
     ]:
         """
-        Compute Q/K/V for both Origin and Branch paths (True ControlNet architecture).
+        为 Origin 和 Branch 两条路径计算 Q/K/V（真正的 ControlNet 架构）。
 
-        Both paths can attend to shared context (e.g., PaliGemma KV) independently,
-        then their outputs are fused: Final = origin_out + zero_conv(branch_out)
+        两条路径都可以独立关注共享上下文（例如 PaliGemma KV），随后融合输出：
+        Final = origin_out + zero_conv(branch_out)
 
         Args:
-            hidden_states: Input hidden states [batch, seq, hidden_dim]
+            hidden_states: 输入 hidden states [batch, seq, hidden_dim]
 
         Returns:
             tuple: (
@@ -260,11 +259,11 @@ class ControlAwareAttention(nn.Module):
                 (Q_branch, K_branch, V_branch),
                 q_branch_gate,  # [batch, gated_heads, seq, 1] or None
             )
-            All Q/K/V tensors in shape [batch, heads, seq, head_dim]
+            所有 Q/K/V tensor 的形状为 [batch, heads, seq, head_dim]
         """
         input_shape = hidden_states.shape[:-1]
 
-        # === Origin Path (pretrained weights, optionally frozen) ===
+        # === Origin Path（预训练权重，可选冻结）===
         q_origin_proj = self.origin.q_proj(hidden_states)
         k_origin_proj = self.origin.k_proj(hidden_states)
         v_origin_proj = self.origin.v_proj(hidden_states)
@@ -273,12 +272,12 @@ class ControlAwareAttention(nn.Module):
         k_origin = k_origin_proj.view(*input_shape, -1, self.head_dim).transpose(1, 2)
         v_origin = v_origin_proj.view(*input_shape, -1, self.head_dim).transpose(1, 2)
 
-        # === Control Branch Path (trainable, lightweight) ===
+        # === Control Branch Path（可训练、轻量）===
         q_branch_proj = self.object_branch.q_proj(hidden_states)
         k_branch_proj = self.object_branch.k_proj(hidden_states)
         v_branch_proj = self.object_branch.v_proj(hidden_states)
 
-        # Split off headwise gates if present
+        # 如果存在 headwise gates，则拆分出来。
         has_headwise_gate = hasattr(self, "use_headwise_gate") and self.use_headwise_gate
         expected_q_size = self.num_control_heads * self.head_dim
 
@@ -305,19 +304,18 @@ class ControlAwareAttention(nn.Module):
         branch_output: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Fuse outputs from Origin and Branch paths using zero_conv fusion.
+        使用 zero_conv fusion 融合 Origin 和 Branch 路径输出。
 
         y = origin_output + zero_conv(branch_output)
 
-        zero_conv is zero-initialized, so the branch starts with zero contribution
-        and gradually learns to contribute as training progresses.
+        zero_conv 采用零初始化，因此该分支初始贡献为零，并会随训练推进逐渐学习贡献。
 
         Args:
-            origin_output: Output from origin attention path [batch, seq, hidden_dim]
-            branch_output: Output from branch attention path [batch, seq, hidden_dim]
+            origin_output: origin attention path 的输出 [batch, seq, hidden_dim]
+            branch_output: branch attention path 的输出 [batch, seq, hidden_dim]
 
         Returns:
-            Fused output tensor [batch, seq, hidden_dim]
+            融合后的输出 tensor [batch, seq, hidden_dim]
         """
         return origin_output + self.zero_conv(branch_output)
 
@@ -332,22 +330,22 @@ def inject_control_attention(
     use_headwise_gate: bool | None = None,
 ):
     """
-    Replace action expert attention layers with ControlAwareAttention.
+    将 action expert attention layers 替换为 ControlAwareAttention。
 
-    Call this AFTER loading a pretrained checkpoint so that the origin branch
-    retains the original pretrained weights unchanged (load-then-inject pattern).
+    应在加载预训练 checkpoint 之后调用，这样 origin branch 可以保留原始预训练权重不变
+    （load-then-inject 模式）。
 
     Args:
-        model: PI0Pytorch model instance
-        num_control_heads: Number of attention heads for control branch (default=2)
-                          Use None for full copy mode (same head count as original)
-        copy_weights: If True, copy weights from original; if False, random initialize
-        freeze_origin: If True, freeze the original action-expert attention branch
-        layer_indices: Optional subset of layer indices to replace (None = all layers)
-        use_headwise_gate: Whether to add per-head sigmoid gate to control branch Q proj
+        model: PI0Pytorch 模型实例
+        num_control_heads: control branch 的 attention head 数量（默认 2）。
+                          使用 None 表示 full copy 模式（head 数与 original 相同）
+        copy_weights: 若为 True，则从 original 复制权重；若为 False，则随机初始化
+        freeze_origin: 若为 True，则冻结原始 action-expert attention branch
+        layer_indices: 可选的待替换层索引子集（None 表示所有层）
+        use_headwise_gate: 是否向 control branch Q proj 添加逐 head sigmoid gate
 
     Returns:
-        int: Number of layers replaced
+        int: 被替换的层数
     """
     mode_str = "copy" if copy_weights or num_control_heads is None else f"{num_control_heads}heads"
     freeze_str = ", frozen_origin" if freeze_origin else ""
@@ -378,10 +376,10 @@ def inject_control_attention(
 
 def get_trainable_control_params(model):
     """
-    Get trainable parameters from ControlAwareAttention modules.
+    获取 ControlAwareAttention 模块中的可训练参数。
 
     Returns:
-        list: Control branch parameters + zero_conv fusion parameters
+        list: control branch 参数 + zero_conv fusion 参数
     """
     control_params = []
 

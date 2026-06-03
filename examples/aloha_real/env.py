@@ -9,7 +9,7 @@ from examples.aloha_real import real_env as _real_env
 
 
 class AlohaRealEnvironment(_environment.Environment):
-    """An environment for an Aloha robot on real hardware."""
+    """真实硬件上的 Aloha 机器人环境。"""
 
     def __init__(
         self,

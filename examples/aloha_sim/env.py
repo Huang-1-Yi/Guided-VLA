@@ -7,7 +7,7 @@ from typing_extensions import override
 
 
 class AlohaSimEnvironment(_environment.Environment):
-    """An environment for an Aloha robot in simulation."""
+    """仿真中的 Aloha 机器人环境。"""
 
     def __init__(self, task: str, obs_type: str = "pixels_agent_pos", seed: int = 0) -> None:
         np.random.seed(seed)
@@ -47,7 +47,7 @@ class AlohaSimEnvironment(_environment.Environment):
     def _convert_observation(self, gym_obs: dict) -> dict:
         img = gym_obs["pixels"]["top"]
         img = image_tools.convert_to_uint8(image_tools.resize_with_pad(img, 224, 224))
-        # Convert axis order from [H, W, C] --> [C, H, W]
+        # 将轴顺序从 [H, W, C] 转换为 [C, H, W]。
         img = np.transpose(img, (2, 0, 1))
 
         return {

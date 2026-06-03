@@ -1,4 +1,4 @@
-"""See _CONFIGS for the list of available configs."""
+"""可用 config 列表见 _CONFIGS。"""
 
 import abc
 from collections.abc import Sequence
@@ -31,19 +31,18 @@ import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
 
 ModelType: TypeAlias = _model.ModelType
-# Work around a tyro issue with using nnx.filterlib.Filter directly.
+# 规避 tyro 直接使用 nnx.filterlib.Filter 时的问题。
 Filter: TypeAlias = nnx.filterlib.Filter
 
 
 @dataclasses.dataclass(frozen=True)
 class AssetsConfig:
-    """Determines the location of assets (e.g., norm stats) that will be used to set up the data pipeline.
+    """确定用于搭建 data pipeline 的 assets 位置，例如 norm stats。
 
-    These assets will be replicated inside the checkpoint under the `assets/asset_id` directory.
+    这些 assets 会复制到 checkpoint 内的 `assets/asset_id` 目录下。
 
-    This can be used to load assets from a different checkpoint (e.g., base model checkpoint) or some other
-    centralized location. For example, to load the norm stats for the Trossen robot from the base model checkpoint
-    during fine-tuning, use:
+    这可用于从其他 checkpoint（例如 base model checkpoint）或其他集中位置加载 assets。
+    例如，微调时如果要从 base model checkpoint 加载 Trossen 机器人的 norm stats，可使用：
 
     ```
     AssetsConfig(
@@ -53,65 +52,61 @@ class AssetsConfig:
     ```
     """
 
-    # Assets directory. If not provided, the config assets_dirs will be used. This is useful to load assets from
-    # a different checkpoint (e.g., base model checkpoint) or some other centralized location.
+    # Assets 目录。未提供时使用 config 的 assets_dirs。适合从其他 checkpoint
+    #（例如 base model checkpoint）或集中位置加载 assets。
     assets_dir: str | None = None
 
-    # Asset id. If not provided, the repo id will be used. This allows users to reference assets that describe
-    # different robot platforms.
+    # Asset id。未提供时使用 repo id。它允许用户引用描述不同机器人平台的 assets。
     asset_id: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class DataConfig:
-    # LeRobot repo id. If None, fake data will be created.
+    # LeRobot repo id。若为 None，则创建 fake data。
     repo_id: str | None = None
-    # Directory within the assets directory containing the data assets.
+    # assets 目录中包含 data assets 的子目录。
     asset_id: str | None = None
-    # Contains precomputed normalization stats. If None, normalization will not be performed.
+    # 包含预计算的 normalization stats。若为 None，则不执行归一化。
     norm_stats: dict[str, _transforms.NormStats] | None = None
 
-    # Adapts dataset-specific inputs to the common format expected by the data transforms.
+    # 将数据集特定输入适配为 data transforms 期望的通用格式。
     repack_transforms: _transforms.Group = dataclasses.field(default_factory=_transforms.Group)
-    # Data transforms, typically include robot specific transformations. Will be applied
-    # before the data is normalized. See `model.Observation` and `model.Actions` to learn about the
-    # normalized data.
+    # Data transforms，通常包含机器人特定转换，会在数据归一化前应用。
+    # 归一化后的数据格式见 `model.Observation` 和 `model.Actions`。
     data_transforms: _transforms.Group = dataclasses.field(default_factory=_transforms.Group)
-    # Model specific transforms. Will be applied after the data is normalized.
+    # 模型特定 transforms，会在数据归一化后应用。
     model_transforms: _transforms.Group = dataclasses.field(default_factory=_transforms.Group)
-    # If true, will use quantile normalization. Otherwise, normal z-score normalization will be used.
+    # 为 true 时使用分位数归一化；否则使用普通 z-score 归一化。
     use_quantile_norm: bool = False
 
-    # Names of keys that will be loaded as horizon-length sequences via `delta_timestamps`.
-    # This includes the main action tensor and any auxiliary labels that must be aligned with
-    # the action horizon, such as `observation.skill_id` for online `skill_soft` construction.
+    # 通过 `delta_timestamps` 按 horizon 长度序列加载的 key 名称。
+    # 包括主 action tensor，以及必须与 action horizon 对齐的辅助标签，
+    # 例如在线构造 `skill_soft` 时使用的 `observation.skill_id`。
     horizon_sequence_keys: Sequence[str] = ("actions",)
 
-    # If true, will use the LeRobot dataset task to define the prompt.
+    # 为 true 时使用 LeRobot 数据集 task 定义 prompt。
     prompt_from_task: bool = False
 
-    # If true, training code will compute an auxiliary object-mask supervision loss using
-    # attention/object maps from the dataset.
+    # 为 true 时，训练代码会使用数据集中的 attention/object maps 计算辅助 object-mask supervision loss。
     use_object_loss: bool = False
 
-    # If true, training code will compute an auxiliary skill-level loss using
-    # precomputed soft skill labels from the dataset.
+    # 为 true 时，训练代码会使用数据集中预计算的 soft skill labels 计算辅助 skill-level loss。
     use_skill_loss: bool = False
 
-    # Local root directory for LeRobotDataset.
+    # LeRobotDataset 的本地根目录。
     local_root_dir: str | None = None
 
-    # Optional dataset entries for multi-dataset loading.
+    # 多数据集加载时使用的可选数据集条目。
     multi_datasets: Sequence[dict[str, str | None]] | None = None
 
-    # Train/validation split ratio. Default is 0.9 (90% train, 10% val).
-    # Set to 1.0 to use all data for training (no validation split).
+    # 训练/验证切分比例。默认 0.9（90% train，10% val）。
+    # 设为 1.0 时，全部数据用于训练（不切分验证集）。
     train_val_split: float = 0.93
 
-    # Random seed for reproducible train/val split
+    # 用于可复现 train/val 切分的随机种子。
     split_seed: int = 42
 
-    # RLDS-specific data loader fields.
+    # RLDS 专用 data loader 字段。
     rlds_data_dir: str | None = None
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     filter_dict_path: str | None = None
@@ -119,14 +114,14 @@ class DataConfig:
 
 class GroupFactory(Protocol):
     def __call__(self, model_config: _model.BaseModelConfig) -> _transforms.Group:
-        """Create a group."""
+        """创建 group。"""
 
 
 @dataclasses.dataclass(frozen=True)
 class ModelTransformFactory(GroupFactory):
-    """Creates model transforms for standard pi0 models."""
+    """为标准 pi0 模型创建 model transforms。"""
 
-    # Default prompt injected when the dataset example does not provide one.
+    # 数据集样本未提供 prompt 时注入的默认 prompt。
     default_prompt: str | None = None
 
     def __call__(self, model_config: _model.BaseModelConfig) -> _transforms.Group:
@@ -184,16 +179,16 @@ class ModelTransformFactory(GroupFactory):
 
 @dataclasses.dataclass(frozen=True)
 class DataConfigFactory(abc.ABC):
-    # The LeRobot repo id.
+    # LeRobot repo id。
     repo_id: str = tyro.MISSING
-    # Determines how the assets will be loaded.
+    # 决定 assets 的加载方式。
     assets: AssetsConfig = dataclasses.field(default_factory=AssetsConfig)
-    # Base config that will be updated by the factory.
+    # 将由 factory 更新的 base config。
     base_config: tyro.conf.Suppress[DataConfig | None] = None
 
     @abc.abstractmethod
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        """Create a data config."""
+        """创建 data config。"""
 
     def create_base_config(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repo_id = self.repo_id if self.repo_id is not tyro.MISSING else None
@@ -240,9 +235,9 @@ class FakeDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class SimpleDataConfig(DataConfigFactory):
-    # Factory for the data transforms.
+    # data transforms 的 factory。
     data_transforms: tyro.conf.Suppress[GroupFactory] = dataclasses.field(default_factory=GroupFactory)
-    # Factory for the model transforms.
+    # model transforms 的 factory。
     model_transforms: tyro.conf.Suppress[GroupFactory] = dataclasses.field(default_factory=ModelTransformFactory)
 
     @override
@@ -256,19 +251,19 @@ class SimpleDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotAlohaDataConfig(DataConfigFactory):
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
+    # 为 true 时，将 joint 维度转换为相对当前 state 的 delta 后再传给模型。
+    # gripper 维度保持绝对值。
     use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
+    # 若提供，且输入数据中不存在 "prompt" key，则注入该 prompt。
     default_prompt: str | None = None
-    # If true, convert joint and gripper values from the standard Aloha space to
-    # the base PI action normalization space used by the pretrained model.
-    # People who use standard Aloha data should set this to true.
+    # 为 true 时，将 joint 和 gripper 值从标准 Aloha 空间转换到
+    # pretrained model 使用的 base PI action normalization 空间。
+    # 使用标准 Aloha 数据时应设为 true。
     adapt_to_pi: bool = False
-    # Local LeRobot dataset root for ALOHA data. CLI/base_config overrides still take precedence.
+    # ALOHA 数据的本地 LeRobot 数据集根目录。CLI/base_config 覆盖项仍优先。
     local_root_dir: str | None = None
 
-    # Repack transforms.
+    # Repack transforms。
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
         default=_transforms.Group(
             inputs=[
@@ -282,7 +277,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             ]
         )
     )
-    # Keys that should be loaded as horizon-length sequences from the dataset.
+    # 应从数据集中按 horizon 长度序列加载的 keys。
     horizon_sequence_keys: Sequence[str] = ("action",)
 
     @override
@@ -315,11 +310,10 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotRobotwinDataConfig(DataConfigFactory):
-    """RoboTwin data follows the ALOHA observation layout but stays in RoboTwin joint space.
+    """RoboTwin 数据沿用 ALOHA observation 布局，但保持在 RoboTwin joint 空间中。
 
-    The policy uses 14-D absolute joint targets with grippers normalized to [0, 1].
-    Training keeps `use_delta_joint_actions=True`, and inference converts model outputs
-    back to absolute RoboTwin joint targets.
+    policy 使用 14-D 绝对 joint targets，grippers 归一化到 [0, 1]。
+    训练保持 `use_delta_joint_actions=True`，推理时再将模型输出转回绝对 RoboTwin joint targets。
     """
 
     repo_id: str = "robotwin"
@@ -327,16 +321,16 @@ class LeRobotRobotwinDataConfig(DataConfigFactory):
         default_factory=lambda: DataConfig(prompt_from_task=True)
     )
 
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
+    # 为 true 时，将 joint 维度转换为相对当前 state 的 delta 后再传给模型。
+    # gripper 维度保持绝对值。
     use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
+    # 若提供，且输入数据中不存在 "prompt" key，则注入该 prompt。
     default_prompt: str | None = None
-    # Local LeRobot dataset root for RoboTwin data. CLI/base_config overrides still take precedence.
+    # RoboTwin 数据的本地 LeRobot 数据集根目录。CLI/base_config 覆盖项仍优先。
     local_root_dir: str | None = None
-    # Optional multi-dataset loading configuration.
+    # 可选的多数据集加载配置。
     multi_datasets: Sequence[dict[str, str | None]] | None = None
-    # Keys that should be loaded as horizon-length sequences from the dataset.
+    # 应从数据集中按 horizon 长度序列加载的 keys。
     horizon_sequence_keys: Sequence[str] = ("action",)
 
     @override
@@ -392,7 +386,7 @@ class LeRobotRobotwinDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotLiberoDataConfig(DataConfigFactory):
-    """Data transforms for LIBERO-style LeRobot datasets."""
+    """LIBERO 风格 LeRobot 数据集使用的 data transforms。"""
 
     extra_delta_transform: bool = False
 
@@ -415,14 +409,14 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         )
     )
 
-    # Keys that should be loaded as horizon-length sequences from the dataset.
+    # 应从数据集中按 horizon 长度序列加载的 keys。
     horizon_sequence_keys: Sequence[str] = ("actions",)
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         input_transforms: list = []
-        # When skill loss is enabled, compute soft skill labels from the skill_id sequence
-        # that was loaded over the action horizon via delta_timestamps (Eq. 4 in GuidedVLA).
+        # 启用 skill loss 时，根据通过 delta_timestamps 在 action horizon 上加载的 skill_id 序列
+        # 计算 soft skill labels（GuidedVLA Eq. 4）。
         if getattr(model_config, "use_skill_loss", False):
             num_classes = getattr(model_config, "skill_num_classes", 8)
             input_transforms.append(_transforms.ComputeSkillSoftLabel(num_classes=num_classes))
@@ -432,8 +426,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             outputs=[libero_policy.LiberoOutputs()],
         )
 
-        # LIBERO actions are already deltas; this option supports checkpoints trained with
-        # an additional delta conversion.
+        # LIBERO actions 已经是 deltas；该选项用于支持训练时额外做过 delta conversion 的 checkpoint。
         if self.extra_delta_transform:
             delta_action_mask = _transforms.make_bool_mask(6, -1)
             data_transforms = data_transforms.push(
@@ -461,7 +454,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
     rlds_data_dir: str | None = None
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
 
-    # Optional dictionary mapping RLDS episode ids to timestep ranges to keep.
+    # 可选字典，用于将 RLDS episode ids 映射到需要保留的 timestep 范围。
     filter_dict_path: str | None = "gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json"
 
     @override
@@ -487,7 +480,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
         )
 
         if self.action_space == droid_rlds_dataset.DroidActionSpace.JOINT_POSITION:
-            # Data loader returns absolute joint position actions -- convert to delta actions for training.
+            # Data loader 返回绝对 joint position actions，这里转换为 delta actions 用于训练。
             delta_action_mask = _transforms.make_bool_mask(7, -1)
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
@@ -533,7 +526,7 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
                 )
             ]
         )
-        # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
+        # 这里假设使用 joint *velocity* actions，因此不应再额外应用 delta transform。
         data_transforms = _transforms.Group(
             inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
             outputs=[droid_policy.DroidOutputs()],
@@ -550,11 +543,10 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotCalvinDataConfig(DataConfigFactory):
-    """Data transforms for CALVIN LeRobot datasets.
+    """CALVIN LeRobot 数据集的数据 transform。
 
-    The default dataset is InternRobotics/InternData-Calvin_ABC, which stores
-    CALVIN observations and actions in split fields. The policy adapter packs
-    those fields into OpenPI's canonical state/action keys.
+    默认数据集是 InternRobotics/InternData-Calvin_ABC，它将 CALVIN observations 和 actions
+    存储在拆分字段中。policy adapter 会把这些字段打包到 OpenPI 的标准 state/action key 中。
     """
 
     @override
@@ -594,105 +586,104 @@ class LeRobotCalvinDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
-    # Name of the config. Must be unique. Will be used to reference this config.
+    # config 名称，必须唯一，用于引用该 config。
     name: tyro.conf.Suppress[str]
-    # Project name.
+    # 项目名称。
     project_name: str = "guidedvla"
-    # Experiment name. Will be used to name the metadata and checkpoint directories.
+    # 实验名称，用于命名 metadata 和 checkpoint 目录。
     exp_name: str = tyro.MISSING
 
-    # Defines the model config. Some attributes (action_dim, action_horizon, and max_token_len) are shared by all models
-    # -- see BaseModelConfig. Specific model implementations (e.g., Pi0Config) inherit from BaseModelConfig and may
-    # define additional attributes.
+    # 定义模型 config。部分属性（action_dim、action_horizon、max_token_len）由所有模型共享，
+    # 见 BaseModelConfig。具体模型实现（例如 Pi0Config）继承 BaseModelConfig，
+    # 并可定义额外属性。
     model: _model.BaseModelConfig = dataclasses.field(default_factory=pi0_config.Pi0Config)
 
-    # A weight loader can optionally load (possibly partial) weights from disk after the model is initialized.
+    # weight loader 可在模型初始化后，从磁盘可选加载权重（可以是部分权重）。
     weight_loader: weight_loaders.WeightLoader = dataclasses.field(default_factory=weight_loaders.NoOpWeightLoader)
 
-    # Optional path to a PyTorch checkpoint to load weights from.
+    # 可选的 PyTorch checkpoint 路径，用于加载权重。
     pytorch_weight_path: str | None = None
 
-    # Precision for PyTorch training.
+    # PyTorch 训练精度。
     pytorch_training_precision: Literal["bfloat16", "float32"] = "bfloat16"
-    # Enable gradient checkpointing for PyTorch training to reduce memory usage.
+    # 启用 PyTorch 训练的 gradient checkpointing，以降低内存/显存占用。
     use_gradient_checkpointing: bool = False
-    # DDP find_unused_parameters: False removes ~20% allreduce overhead but requires all
-    # parameters to participate in every forward/backward. Safe to set False when
-    # control_attention is always active and skill/object branches are always used.
+    # DDP find_unused_parameters：False 可减少约 20% allreduce 开销，
+    # 但要求所有参数都参与每次 forward/backward。当 control_attention 始终启用，
+    # 且 skill/object 分支始终使用时，可以安全设为 False。
     ddp_find_unused_parameters: bool = False
-    # Per-backbone LR scale: set <1.0 (e.g. 0.1) to train new heads faster than the backbone.
+    # 每个 backbone 的 LR 缩放：设为 <1.0（例如 0.1）可让新 head 比 backbone 学得更快。
     backbone_lr_scale: float = 1.0
 
     lr_schedule: _optimizer.LRScheduleConfig = dataclasses.field(default_factory=_optimizer.CosineDecaySchedule)
     optimizer: _optimizer.OptimizerConfig = dataclasses.field(default_factory=_optimizer.AdamW)
     ema_decay: float | None = 0.99
 
-    # Specifies which weights should be frozen.
+    # 指定哪些权重应被冻结。
     freeze_filter: tyro.conf.Suppress[Filter] = dataclasses.field(default_factory=nnx.Nothing)
 
-    # Determines the data to be trained on.
+    # 决定训练所用数据。
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
-    # Base directory for config assets (e.g., norm stats).
+    # config assets 的基础目录，例如 norm stats。
     assets_base_dir: str = "./assets"
-    # Base directory for checkpoints.
+    # checkpoints 的基础目录。
     checkpoint_base_dir: str = "./checkpoints"
 
-    # Random seed that will be used by random generators during training.
+    # 训练中随机生成器使用的随机种子。
     seed: int = 42
-    # Global batch size per optimizer step.
+    # 每个 optimizer step 的全局 batch size。
     batch_size: int = 32
-    # Number of workers to use for the data loader. Increasing this number will speed up data loading but
-    # will increase memory and CPU usage.
+    # data loader 使用的 worker 数量。增大该值可加快数据加载，但会增加内存和 CPU 使用。
     num_workers: int = 15
-    # Number of train steps (batches) to run.
+    # 运行的训练 step（batch）数量。
     num_train_steps: int = 30_000
 
-    # How often (in steps) to log training metrics.
+    # 记录训练指标的频率（按 step）。
     log_interval: int = 100
-    # How often (in steps) to save checkpoints.
+    # 保存 checkpoint 的频率（按 step）。
     save_interval: int = 5000
-    # How often (in steps) to run validation. If None, defaults to save_interval.
+    # 运行验证的频率（按 step）。若为 None，则默认使用 save_interval。
     val_interval: int | None = 500
-    # Maximum number of batches to use for validation. Set to None to use all validation data.
+    # 验证时最多使用的 batch 数。设为 None 时使用全部验证数据。
     val_max_batches: int = 8
-    # Weight applied to the object-mask supervision loss.
+    # 应用于 object-mask supervision loss 的权重。
     object_loss_weight: float = 0.1
-    # Weight applied to the skill auxiliary loss when enabled.
+    # 启用 skill auxiliary loss 时应用的权重。
     skill_loss_weight: float = 0.1
-    # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
+    # 若设置，任何满足 step % keep_period == 0 的已有 checkpoints 都不会被删除。
     keep_period: int | None = 5000
 
-    # If true, will overwrite the checkpoint directory if it already exists.
+    # 为 true 时，如果 checkpoint 目录已存在则覆盖。
     overwrite: bool = False
-    # If true, will resume training from the last checkpoint.
+    # 为 true 时，从最后一个 checkpoint 恢复训练。
     resume: bool = False
 
-    # If true, will enable wandb logging.
+    # 为 true 时启用 wandb logging。
     wandb_enabled: bool = True
 
-    # Used to pass metadata to the policy server.
+    # 用于向 policy server 传递 metadata。
     policy_metadata: dict[str, Any] | None = None
 
-    # JAX trainer only: number of devices to shard each FSDP group across.
-    # The PyTorch trainer uses DDP and ignores this value.
+    # 仅 JAX trainer 使用：每个 FSDP group 跨多少设备进行 sharding。
+    # PyTorch trainer 使用 DDP，会忽略该值。
     fsdp_devices: int = 1
 
     @property
     def assets_dirs(self) -> pathlib.Path:
-        """Get the assets directory for this config."""
+        """获取该 config 的 assets 目录。"""
         return (pathlib.Path(self.assets_base_dir) / self.name).resolve()
 
     @property
     def checkpoint_dir(self) -> pathlib.Path:
-        """Get the checkpoint directory for this config."""
+        """获取该 config 的 checkpoint 目录。"""
         if not self.exp_name:
             raise ValueError("--exp_name must be set")
         return (pathlib.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
 
     @property
     def trainable_filter(self) -> nnx.filterlib.Filter:
-        """Get the filter for the trainable parameters."""
+        """获取 trainable parameters 的 filter。"""
         return nnx.All(nnx.Param, nnx.Not(self.freeze_filter))
 
     def __post_init__(self) -> None:
@@ -700,10 +691,10 @@ class TrainConfig:
             raise ValueError("Cannot resume and overwrite at the same time.")
 
 
-# Use `get_config` if you need to get a config by name in your code.
+# 如需在代码中按名称获取 config，请使用 `get_config`。
 _CONFIGS = [
     #
-    # Inference Aloha configs.
+    # Aloha 推理 configs。
     #
     TrainConfig(
         name="pi0_aloha",
@@ -740,7 +731,7 @@ _CONFIGS = [
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     #
-    # Inference DROID configs.
+    # DROID 推理 configs。
     #
     TrainConfig(
         name="pi0_droid",
@@ -785,13 +776,13 @@ _CONFIGS = [
         ),
     ),
     #
-    # Fine-tuning Libero configs.
+    # Libero 微调 configs。
     #
     TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),
         data=LeRobotLiberoDataConfig(
-            repo_id="physical-intelligence/libero",  # replace with your LeRobot dataset repo
+            repo_id="physical-intelligence/libero",  # 替换为你的 LeRobot 数据集 repo
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=True,
             repack_transforms=_transforms.Group(
@@ -829,7 +820,7 @@ _CONFIGS = [
             skill_head_indices=[6, 7],
             skill_use_control=False,
         ),
-        # Released GuidedVLA LIBERO dataset with object labels and skill labels for auxiliary heads.
+        # 已发布的 GuidedVLA LIBERO 数据集，包含辅助 head 使用的 object labels 和 skill labels。
         data=LeRobotLiberoDataConfig(
             repo_id="ybwowen/libero",
             base_config=DataConfig(
@@ -857,7 +848,7 @@ _CONFIGS = [
             object_use_control=True,
             object_head_indices=[0, 1],
         ),
-        # Released GuidedVLA LIBERO dataset with object labels for the auxiliary object head.
+        # 已发布的 GuidedVLA LIBERO 数据集，包含辅助 object head 使用的 object labels。
         data=LeRobotLiberoDataConfig(
             repo_id="ybwowen/libero",
             base_config=DataConfig(
@@ -879,7 +870,7 @@ _CONFIGS = [
             guided_layer_indices=[9, 10, 11, 12],
             use_depth=True,
             depth_use_control=True,
-            depth_model_name="path/to/da3-small",  # set to your local DA3-SMALL checkpoint
+            depth_model_name="path/to/da3-small",  # 设为你的本地 DA3-SMALL checkpoint
             depth_head_indices=[4, 5],
         ),
         data=LeRobotLiberoDataConfig(
@@ -963,7 +954,7 @@ _CONFIGS = [
         name="pi05_libero",
         model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
         data=LeRobotLiberoDataConfig(
-            repo_id="your-hf-username/your-dataset",  # replace with your LeRobot dataset repo
+            repo_id="your-hf-username/your-dataset",  # 替换为你的 LeRobot 数据集 repo
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
@@ -980,7 +971,7 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     #
-    # CALVIN fine-tuning configs.
+    # CALVIN 微调 configs。
     #
     TrainConfig(
         name="pi05_calvin",
@@ -1003,10 +994,10 @@ _CONFIGS = [
         num_workers=8,
     ),
     #
-    # Fine-tuning Aloha configs.
+    # Aloha 微调 configs。
     #
-    # Example config for fine-tuning on a custom ALOHA LeRobot dataset.
-    # See examples/aloha_real/README.md for data conversion and training instructions.
+    # 在自定义 ALOHA LeRobot 数据集上微调的示例 config。
+    # 数据转换和训练说明见 examples/aloha_real/README.md。
     TrainConfig(
         name="pi0_aloha_pen_uncap",
         model=pi0_config.Pi0Config(),
@@ -1067,11 +1058,11 @@ _CONFIGS = [
         batch_size=64,
     ),
     #
-    # RoboTwin fine-tuning configs. These align with RoboTwin's `policy/pi05` branch:
-    # - 14-D absolute qpos actions
-    # - ALOHA-style camera/state layout
-    # - RoboTwin-normalized grippers, so `adapt_to_pi=False`
-    # - delta-action training kept enabled via LeRobotRobotwinDataConfig defaults
+    # RoboTwin 微调 configs。这些配置与 RoboTwin 的 `policy/pi05` 分支对齐：
+    # - 14-D 绝对 qpos actions
+    # - ALOHA 风格 camera/state 布局
+    # - RoboTwin-normalized grippers，因此 `adapt_to_pi=False`
+    # - 通过 LeRobotRobotwinDataConfig 默认值保持 delta-action training 启用
     #
     TrainConfig(
         name="pi05_aloha_robotwin_full",
@@ -1097,7 +1088,7 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
     ),
-    # Backward-compatible aliases matching the RoboTwin `policy/pi05` branch names.
+    # 与 RoboTwin `policy/pi05` 分支名称匹配的向后兼容别名。
     TrainConfig(
         name="pi05_aloha_full_base",
         model=pi0_config.Pi0Config(pi05=True),
@@ -1169,9 +1160,9 @@ _CONFIGS = [
         ).get_freeze_filter(),
         fsdp_devices=2,
     ),
-    # GuidedVLA-style RoboTwin configs for the PyTorch trainer.
-    # Object supervision uses the optional `*_attention_object` maps.
-    # The skill config additionally expects `observation.skill_id`.
+    # PyTorch trainer 使用的 GuidedVLA 风格 RoboTwin configs。
+    # Object supervision 使用可选的 `*_attention_object` maps。
+    # skill config 还需要 `observation.skill_id`。
     TrainConfig(
         name="pi0_base_aloha_robotwin_object_depth_skill",
         model=pi0_config.Pi0Config(
@@ -1183,11 +1174,11 @@ _CONFIGS = [
             object_head_indices=[0, 1],
             object_use_control=False,
             use_depth=True,
-            depth_model_name="path/to/da3-small",  # set to your local DA3-SMALL checkpoint
+            depth_model_name="path/to/da3-small",  # 设为你的本地 DA3-SMALL checkpoint
             depth_head_indices=[4, 5],
             depth_use_control=True,
             use_skill_loss=True,
-            skill_num_classes=8,  # adjust to your dataset if you have a smaller skill vocabulary
+            skill_num_classes=8,  # 如果你的数据集 skill vocabulary 更小，请相应调整
             skill_head_indices=[6, 7],
             skill_use_control=False,
         ),
@@ -1205,7 +1196,7 @@ _CONFIGS = [
         num_workers=8,
         num_train_steps=30_000,
     ),
-    # Lightweight smoke-test config for multi-dataset loading paths.
+    # 用于多数据集加载路径的轻量 smoke-test config。
     TrainConfig(
         name="pi0_base_aloha_robotwin_full_multi",
         model=pi0_config.Pi0Config(),
@@ -1228,7 +1219,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     #
-    # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
+    # ALOHA Sim configs。该 config 用于演示如何在简单仿真环境中训练。
     #
     TrainConfig(
         name="pi0_aloha_sim",
@@ -1242,7 +1233,7 @@ _CONFIGS = [
         num_train_steps=20_000,
     ),
     #
-    # Debugging configs.
+    # 调试 configs。
     #
     TrainConfig(
         name="debug",
@@ -1277,7 +1268,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     #
-    # RoboArena configs.
+    # RoboArena configs。
     #
     *roboarena_config.get_roboarena_configs(),
 ]
@@ -1292,7 +1283,7 @@ def cli() -> TrainConfig:
 
 
 def get_config(config_name: str) -> TrainConfig:
-    """Get a config by name."""
+    """按名称获取 config。"""
     if config_name not in _CONFIGS_DICT:
         closest = difflib.get_close_matches(config_name, _CONFIGS_DICT.keys(), n=1, cutoff=0.0)
         closest_str = f" Did you mean '{closest[0]}'? " if closest else ""

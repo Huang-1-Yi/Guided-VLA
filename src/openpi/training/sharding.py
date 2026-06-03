@@ -6,7 +6,7 @@ import numpy as np
 
 BATCH_AXIS = "batch"
 FSDP_AXIS = "fsdp"
-# In FSDP, we shard the data across both the batch and FSDP axes.
+# 在 FSDP 中，数据会同时沿 batch 和 FSDP 轴分片。
 DATA_AXIS = (BATCH_AXIS, FSDP_AXIS)
 
 
@@ -25,9 +25,11 @@ def make_mesh(num_fsdp_devices: int) -> jax.sharding.Mesh:
 
 @contextlib.contextmanager
 def set_mesh(mesh: jax.sharding.Mesh):
-    """Plumbing the mesh deep into the module tree is extremeley cumbersome; until the JAX team lands a better API, a
-    custom context manager like this one is the recommended way to maintain a reference to a global mesh. This is only used
-    in `activation_sharding_constraint` below."""
+    """在模块树深处传递 mesh 非常繁琐。
+
+    在 JAX 团队提供更好的 API 之前，使用这样的自定义 context manager 是维护全局 mesh 引用的推荐方式。
+    这里仅供下面的 `activation_sharding_constraint` 使用。
+    """
     if _MeshState.active_mesh is not None:
         raise ValueError("Cannot nest set_mesh context managers.")
     _MeshState.active_mesh = mesh
@@ -52,35 +54,34 @@ def fsdp_sharding(
     min_size_mbytes: int = 4,  # 4 MiB
     log: bool = False,
 ):
-    """Apply FSDP sharding to a pytree of arrays based on the mesh shape.
+    """根据 mesh 形状对 array pytree 应用 FSDP 分片。
 
     Args:
-        pytree: A pytree to be apply sharding specified by the mesh, note that only array types (eg. contains .shape attr)
-          will be considered for sharding.
-        mesh: The mesh being used for applying sharding on to pytree.
-        min_size_mbytes: The minimum size of the array in MiB to be considered for sharding, any array smaller than this
-          will be replicated.
-        log: If true, will log the sharding decisions for arrays that are being considered for sharding.
+        pytree: 要根据 mesh 应用分片的 pytree。注意，只有 array 类型（例如包含 .shape 属性）
+          会被纳入分片考虑。
+        mesh: 用于对 pytree 应用分片的 mesh。
+        min_size_mbytes: 会被考虑分片的 array 最小大小，单位 MiB；小于该值的 array 会被复制。
+        log: 如果为 true，会记录被考虑分片的 array 的分片决策。
 
     Returns:
-        The sharded pytree.
+        分片后的 pytree。
     """
     min_size_bytes = min_size_mbytes * 2**20
 
     def _shard_arr(kp, array: jax.ShapeDtypeStruct):
-        # if fsdp is not actually going to be used, replicate everything to avoid extraneous logging
+        # 如果实际上不会使用 FSDP，则复制所有内容以避免多余日志。
         if mesh.shape[FSDP_AXIS] == 1:
             return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-        # replicate scalar and vector arrays
+        # 复制标量和向量 array。
         if not hasattr(array, "shape"):
             return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
         if len(array.shape) < 2:
             return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-        # replicate small arrays
+        # 复制较小 array。
         if (arr_size := np.prod(array.shape) * np.dtype(array.dtype).itemsize) < min_size_bytes:
             return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
-        # shard matrices and larger tensors along the largest axis that is divisible by the fsdp dimension
+        # 对矩阵和更大的 tensor，沿可被 FSDP 维度整除的最大轴分片。
         axes = np.argsort(array.shape)[::-1]
         spec = [None] * len(axes)
         for i in axes:
@@ -92,7 +93,7 @@ def fsdp_sharding(
                 spec[i] = FSDP_AXIS
                 return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*spec))
 
-        # replicate if no valid sharding was found
+        # 如果找不到有效分片方式，则复制。
         if log:
             logging.warning(
                 f"Could not find a valid sharding for {jax.tree_util.keystr(kp)} of shape {array.shape} with mesh of shape {mesh.shape}"
