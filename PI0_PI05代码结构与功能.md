@@ -1,0 +1,381 @@
+# PI0/PI05 代码结构与功能（根目录）
+
+本文按 GuidedVLA 当前仓库的根目录结构整理 PI0/PI05 相关代码，方便后续阅读、训练、推理和二次开发时快速定位文件。
+
+## 根目录概览
+
+### 主要文件夹
+
+- [docs](docs)：项目文档和结构图，包含 Docker、远程推理、normalization stats 等说明。
+- [examples](examples)：各类环境的接入、评估和数据转换示例，例如 LIBERO、CALVIN、DROID、ALOHA、RoboTwin。
+- [packages](packages)：独立 Python 子包，目前主要是远程推理 client 包 `openpi-client`。
+- [scripts](scripts)：训练、推理服务、norm stats 计算和数据加载检查等命令行入口。
+- [src](src)：核心源码目录，包含 `openpi` 主包和 `padp` 迁移相关内容。
+- [third_party](third_party)：外部依赖源码或子模块目录，例如 ALOHA、LIBERO、RoboTwin、Depth Anything。
+- [.github](.github)：GitHub Actions 等仓库自动化配置。
+- [.venv](.venv)：本地虚拟环境目录，通常不作为源码阅读对象。
+
+### 根目录文件
+
+- [README.md](README.md)：项目总说明，包含安装、训练、推理、数据准备和示例入口。
+- [pyproject.toml](pyproject.toml)：Python 项目元数据、依赖和开发工具配置。
+- [uv.lock](uv.lock)：`uv` 依赖锁文件。
+- [CONTRIBUTING.md](CONTRIBUTING.md)：贡献和开发规范。
+- [CITATION.cff](CITATION.cff)：论文或项目引用信息。
+- [LICENSE](LICENSE)：主项目许可证。
+- [LICENSE_GEMMA.txt](LICENSE_GEMMA.txt)：Gemma 相关许可证。
+- [.gitmodules](.gitmodules)：Git submodule 配置。
+- [.dockerignore](.dockerignore)：Docker build 忽略规则。
+- [.gitignore](.gitignore)：Git 忽略规则。
+- [.pre-commit-config.yaml](.pre-commit-config.yaml)：pre-commit 检查配置。
+- [.python-version](.python-version)：项目使用的 Python 版本。
+- [Robomimic数据集迁移_README.md](Robomimic数据集迁移_README.md)：Robomimic 数据迁移计划文档。
+- [dp架构代码迁移_README.md](dp架构代码迁移_README.md)：DP 架构迁移说明。
+- [padp架构代码迁移_无需robomimic版_README.md](padp架构代码迁移_无需robomimic版_README.md)：PADP 架构迁移到 GuidedVLA/pi05 风格的规划文档。
+- [PI0_PI05阅读建议.md](PI0_PI05阅读建议.md)：配套阅读路线文档。
+- [PI0_PI05代码结构与功能.md](PI0_PI05代码结构与功能.md)：当前文件，即代码结构地图。
+
+## docs
+
+`docs` 主要保存项目使用文档和图示资源。
+
+### docs/figures
+
+- [docs/figures/guidedvla-teaser.png](docs/figures/guidedvla-teaser.png)：论文或 README teaser 图。
+- [docs/figures/guidedvla-teaser.pdf](docs/figures/guidedvla-teaser.pdf)：teaser 图的 PDF 版本。
+- [docs/figures/guidedvla-model-structure.png](docs/figures/guidedvla-model-structure.png)：模型结构图。
+- [docs/figures/guidedvla-model-structure.pdf](docs/figures/guidedvla-model-structure.pdf)：模型结构图的 PDF 版本。
+- [docs/figures/controlnet_style_adapter.png](docs/figures/controlnet_style_adapter.png)：ControlNet 风格 adapter 图。
+- [docs/figures/controlnet_style_adapter.pdf](docs/figures/controlnet_style_adapter.pdf)：ControlNet 风格 adapter 图的 PDF 版本。
+
+### docs 根部文件
+
+- [docs/docker.md](docs/docker.md)：Docker 环境、镜像和容器运行说明。
+- [docs/remote_inference.md](docs/remote_inference.md)：远程推理 server/client 使用方式说明。
+- [docs/norm_stats.md](docs/norm_stats.md)：normalization stats 的计算、保存和加载说明。
+
+## examples
+
+`examples` 是环境接入、评估和数据转换入口。每个环境目录通常包含 `README`、`main.py`、依赖文件和环境 wrapper。
+
+### examples/aloha_real
+
+- [examples/aloha_real/README.md](examples/aloha_real/README.md)：真实 ALOHA 使用说明。
+- [examples/aloha_real/main.py](examples/aloha_real/main.py)：真实 ALOHA runtime 入口。
+- [examples/aloha_real/env.py](examples/aloha_real/env.py)：真实 ALOHA environment adapter。
+- [examples/aloha_real/real_env.py](examples/aloha_real/real_env.py)：真实硬件底层环境封装。
+- [examples/aloha_real/robot_utils.py](examples/aloha_real/robot_utils.py)：机器人硬件工具函数。
+- [examples/aloha_real/video_display.py](examples/aloha_real/video_display.py)：视频显示工具。
+- [examples/aloha_real/constants.py](examples/aloha_real/constants.py)：真实 ALOHA 常量。
+- [examples/aloha_real/convert_aloha_data_to_lerobot.py](examples/aloha_real/convert_aloha_data_to_lerobot.py)：ALOHA 数据转 LeRobot 格式。
+- [examples/aloha_real/Dockerfile](examples/aloha_real/Dockerfile)：真实 ALOHA Dockerfile。
+- [examples/aloha_real/compose.yml](examples/aloha_real/compose.yml)：真实 ALOHA compose 配置。
+- [examples/aloha_real/requirements.in](examples/aloha_real/requirements.in)：依赖输入文件。
+- [examples/aloha_real/requirements.txt](examples/aloha_real/requirements.txt)：锁定依赖。
+
+### examples/aloha_sim
+
+- [examples/aloha_sim/README.md](examples/aloha_sim/README.md)：ALOHA Sim 使用说明。
+- [examples/aloha_sim/main.py](examples/aloha_sim/main.py)：ALOHA Sim runtime 入口。
+- [examples/aloha_sim/env.py](examples/aloha_sim/env.py)：仿真环境 adapter。
+- [examples/aloha_sim/saver.py](examples/aloha_sim/saver.py)：仿真数据保存工具。
+- [examples/aloha_sim/Dockerfile](examples/aloha_sim/Dockerfile)：ALOHA Sim Dockerfile。
+- [examples/aloha_sim/compose.yml](examples/aloha_sim/compose.yml)：ALOHA Sim compose 配置。
+- [examples/aloha_sim/requirements.in](examples/aloha_sim/requirements.in)：依赖输入文件。
+- [examples/aloha_sim/requirements.txt](examples/aloha_sim/requirements.txt)：锁定依赖。
+
+### examples/calvin
+
+- [examples/calvin/README.md](examples/calvin/README.md)：CALVIN 使用说明。
+- [examples/calvin/main.py](examples/calvin/main.py)：CALVIN 评估入口。
+- [examples/calvin/calvin_env_wrapper.py](examples/calvin/calvin_env_wrapper.py)：CALVIN 环境 wrapper。
+
+### examples/droid
+
+- [examples/droid/README.md](examples/droid/README.md)：DROID 使用说明。
+- [examples/droid/README_train.md](examples/droid/README_train.md)：DROID 训练数据/RLDS 使用说明。
+- [examples/droid/main.py](examples/droid/main.py)：DROID 真实或仿真评估入口。
+- [examples/droid/convert_droid_data_to_lerobot.py](examples/droid/convert_droid_data_to_lerobot.py)：DROID 原始数据转 LeRobot 格式。
+- [examples/droid/compute_droid_nonidle_ranges.py](examples/droid/compute_droid_nonidle_ranges.py)：DROID 非静止片段过滤范围生成。
+
+### examples/libero
+
+- [examples/libero/README.md](examples/libero/README.md)：LIBERO 使用说明。
+- [examples/libero/main.py](examples/libero/main.py)：LIBERO 环境评估入口。
+- [examples/libero/Dockerfile](examples/libero/Dockerfile)：LIBERO 环境 Dockerfile。
+- [examples/libero/compose.yml](examples/libero/compose.yml)：LIBERO Docker compose。
+- [examples/libero/requirements.in](examples/libero/requirements.in)：LIBERO 依赖输入文件。
+- [examples/libero/requirements.txt](examples/libero/requirements.txt)：LIBERO 锁定依赖。
+
+### examples/libero_plus
+
+- [examples/libero_plus/README.md](examples/libero_plus/README.md)：LIBERO Plus 使用说明。
+- [examples/libero_plus/main.py](examples/libero_plus/main.py)：LIBERO Plus 单任务本地评估入口。
+- [examples/libero_plus/eval_libero_plus.py](examples/libero_plus/eval_libero_plus.py)：LIBERO Plus 批量评估和多进程 GPU 调度入口。
+- [examples/libero_plus/extract_libero_plus_results.py](examples/libero_plus/extract_libero_plus_results.py)：结果提取和汇总脚本。
+- [examples/libero_plus/requirements.txt](examples/libero_plus/requirements.txt)：LIBERO Plus 依赖。
+
+### examples/robotwin
+
+- [examples/robotwin/README.md](examples/robotwin/README.md)：RoboTwin 使用说明。
+- [examples/robotwin/main.py](examples/robotwin/main.py)：RoboTwin 评估入口。
+- [examples/robotwin/run.sh](examples/robotwin/run.sh)：RoboTwin 运行脚本。
+
+### examples/simple_client
+
+- [examples/simple_client/README.md](examples/simple_client/README.md)：简单 client 示例说明。
+- [examples/simple_client/main.py](examples/simple_client/main.py)：通过 websocket 连接 policy server 的简单示例。
+- [examples/simple_client/Dockerfile](examples/simple_client/Dockerfile)：simple client Dockerfile。
+- [examples/simple_client/compose.yml](examples/simple_client/compose.yml)：simple client compose。
+- [examples/simple_client/requirements.in](examples/simple_client/requirements.in)：依赖输入文件。
+- [examples/simple_client/requirements.txt](examples/simple_client/requirements.txt)：锁定依赖。
+
+### examples/ur5
+
+- [examples/ur5/README.md](examples/ur5/README.md)：UR5 相关说明。
+
+### examples 根部文件
+
+- [examples/convert_jax_model_to_pytorch.py](examples/convert_jax_model_to_pytorch.py)：将 JAX checkpoint 转换为 PyTorch checkpoint。
+- [examples/inference.ipynb](examples/inference.ipynb)：推理 notebook 示例。
+- [examples/policy_records.ipynb](examples/policy_records.ipynb)：policy 记录和分析 notebook。
+
+## packages
+
+`packages` 保存可独立安装或复用的子包。
+
+### packages/openpi-client
+
+`openpi-client` 是独立客户端包，用于远程推理、runtime loop 和环境交互。
+
+- [packages/openpi-client/pyproject.toml](packages/openpi-client/pyproject.toml)：client 包依赖和元数据。
+
+### packages/openpi-client/src/openpi_client
+
+- [packages/openpi-client/src/openpi_client/base_policy.py](packages/openpi-client/src/openpi_client/base_policy.py)：client policy 抽象。
+- [packages/openpi-client/src/openpi_client/websocket_client_policy.py](packages/openpi-client/src/openpi_client/websocket_client_policy.py)：websocket client policy，连接 `serve_policy.py` 启动的服务。
+- [packages/openpi-client/src/openpi_client/action_chunk_broker.py](packages/openpi-client/src/openpi_client/action_chunk_broker.py)：把 action chunk 拆成逐步动作返回。
+- [packages/openpi-client/src/openpi_client/image_tools.py](packages/openpi-client/src/openpi_client/image_tools.py)：client 侧图像 resize/uint8 转换。
+- [packages/openpi-client/src/openpi_client/msgpack_numpy.py](packages/openpi-client/src/openpi_client/msgpack_numpy.py)：msgpack + NumPy array 序列化支持。
+- [packages/openpi-client/src/openpi_client/image_tools_test.py](packages/openpi-client/src/openpi_client/image_tools_test.py)：图像工具测试。
+- [packages/openpi-client/src/openpi_client/msgpack_numpy_test.py](packages/openpi-client/src/openpi_client/msgpack_numpy_test.py)：NumPy 序列化测试。
+- [packages/openpi-client/src/openpi_client/__init__.py](packages/openpi-client/src/openpi_client/__init__.py)：client 包初始化文件。
+
+### packages/openpi-client/src/openpi_client/runtime
+
+- [packages/openpi-client/src/openpi_client/runtime/runtime.py](packages/openpi-client/src/openpi_client/runtime/runtime.py)：runtime 主循环，协调 environment、agent、subscriber。
+- [packages/openpi-client/src/openpi_client/runtime/agent.py](packages/openpi-client/src/openpi_client/runtime/agent.py)：agent 抽象。
+- [packages/openpi-client/src/openpi_client/runtime/environment.py](packages/openpi-client/src/openpi_client/runtime/environment.py)：environment 抽象。
+- [packages/openpi-client/src/openpi_client/runtime/subscriber.py](packages/openpi-client/src/openpi_client/runtime/subscriber.py)：runtime 事件订阅接口。
+- [packages/openpi-client/src/openpi_client/runtime/agents/policy_agent.py](packages/openpi-client/src/openpi_client/runtime/agents/policy_agent.py)：用 policy 实现 agent。
+
+## scripts
+
+`scripts` 保存训练、推理服务和数据处理入口。
+
+### scripts/docker
+
+- [scripts/docker/compose.yml](scripts/docker/compose.yml)：Docker compose 服务配置。
+- [scripts/docker/serve_policy.Dockerfile](scripts/docker/serve_policy.Dockerfile)：推理服务镜像构建文件。
+- [scripts/docker/install_docker_ubuntu22.sh](scripts/docker/install_docker_ubuntu22.sh)：Ubuntu 22.04 Docker 安装脚本。
+- [scripts/docker/install_nvidia_container_toolkit.sh](scripts/docker/install_nvidia_container_toolkit.sh)：NVIDIA container toolkit 安装脚本。
+
+### scripts 根部文件
+
+- [scripts/train.py](scripts/train.py)：JAX/NNX 版训练入口，走 openpi 原始 PI0/PI05 训练主线。
+- [scripts/train_pytorch.py](scripts/train_pytorch.py)：PyTorch 版训练入口，也是 GuidedVLA 主要训练入口，支持 DDP、ControlAttention、object/skill/depth loss、checkpoint 加载和保存。
+- [scripts/train_pytorch.sh](scripts/train_pytorch.sh)：PyTorch 训练命令示例脚本。
+- [scripts/serve_policy.py](scripts/serve_policy.py)：加载 checkpoint 并启动 websocket policy server，用于在线推理或环境评估。
+- [scripts/compute_norm_stats.py](scripts/compute_norm_stats.py)：按 config 计算数据集 normalization stats。
+- [scripts/test_data_loader.py](scripts/test_data_loader.py)：检查 data loader 输出是否符合模型输入预期。
+- [scripts/train_test.py](scripts/train_test.py)：JAX 训练相关测试。
+- [scripts/train_pytorch_object_targets_test.py](scripts/train_pytorch_object_targets_test.py)：PyTorch object target/辅助监督相关测试。
+- [scripts/__init__.py](scripts/__init__.py)：脚本包标记文件。
+
+## src
+
+`src` 是核心代码目录，主要包含 `openpi` 主包和 `padp` 迁移内容。
+
+### src/openpi
+
+- [src/openpi/__init__.py](src/openpi/__init__.py)：`openpi` 包初始化文件。
+- [src/openpi/transforms.py](src/openpi/transforms.py)：数据 transform 核心，包含 repack、normalization、prompt 注入、resize、tokenize、padding、skill soft label 等。
+- [src/openpi/transforms_test.py](src/openpi/transforms_test.py)：transforms 单元测试。
+- [src/openpi/conftest.py](src/openpi/conftest.py)：pytest 测试配置。
+- [src/openpi/py.typed](src/openpi/py.typed)：声明该包支持类型检查。
+
+### src/openpi/training
+
+训练配置、数据加载、checkpoint、优化器和分布式训练辅助代码。
+
+- [src/openpi/training/config.py](src/openpi/training/config.py)：训练配置中心，定义 `TrainConfig`、各环境数据配置、模型 transform factory 和 `_CONFIGS`。
+- [src/openpi/training/data_loader.py](src/openpi/training/data_loader.py)：LeRobot/RLDS 数据加载主逻辑，负责创建 dataset、串联 transforms、产出 `Observation/actions`。
+- [src/openpi/training/droid_rlds_dataset.py](src/openpi/training/droid_rlds_dataset.py)：DROID RLDS 数据读取和过滤逻辑。
+- [src/openpi/training/checkpoints.py](src/openpi/training/checkpoints.py)：checkpoint 目录初始化、保存、恢复、norm stats assets 保存。
+- [src/openpi/training/optimizer.py](src/openpi/training/optimizer.py)：学习率 schedule、AdamW、梯度裁剪等 optimizer 配置。
+- [src/openpi/training/sharding.py](src/openpi/training/sharding.py)：JAX mesh、FSDP sharding、activation sharding constraint。
+- [src/openpi/training/utils.py](src/openpi/training/utils.py)：`TrainState` 和 PyTree 日志辅助函数。
+- [src/openpi/training/weight_loaders.py](src/openpi/training/weight_loaders.py)：预训练 checkpoint、PaliGemma 权重加载和参数合并。
+- [src/openpi/training/data_loader_test.py](src/openpi/training/data_loader_test.py)：data loader 测试。
+- [src/openpi/training/data_loader_object_map_test.py](src/openpi/training/data_loader_object_map_test.py)：object attention map / object target 数据加载测试。
+- [src/openpi/training/misc/roboarena_config.py](src/openpi/training/misc/roboarena_config.py)：RoboArena baseline 相关配置。
+
+### src/openpi/models
+
+JAX/NNX 版模型代码，更接近 openpi 原始 PI0/PI05。
+
+- [src/openpi/models/model.py](src/openpi/models/model.py)：模型公共抽象，定义 `ModelType`、`Observation`、`Actions`、`BaseModelConfig`、`BaseModel`、checkpoint 参数恢复。
+- [src/openpi/models/pi0_config.py](src/openpi/models/pi0_config.py)：PI0/PI05 模型配置，包含 action dim、horizon、token 长度、LoRA、freeze filter 等。
+- [src/openpi/models/pi0.py](src/openpi/models/pi0.py)：JAX 版 PI0/PI05 flow matching 模型主体。
+- [src/openpi/models/pi0_fast.py](src/openpi/models/pi0_fast.py)：PI0-FAST 自回归 token action 模型。
+- [src/openpi/models/gemma.py](src/openpi/models/gemma.py)：JAX Gemma/PaliGemma transformer 实现。
+- [src/openpi/models/gemma_fast.py](src/openpi/models/gemma_fast.py)：FAST 路径使用的 Gemma 变体。
+- [src/openpi/models/siglip.py](src/openpi/models/siglip.py)：视觉 tower / SigLIP 相关实现。
+- [src/openpi/models/vit.py](src/openpi/models/vit.py)：ViT 基础组件。
+- [src/openpi/models/tokenizer.py](src/openpi/models/tokenizer.py)：PaliGemma tokenizer、FAST tokenizer、RoboArena binning tokenizer。
+- [src/openpi/models/lora.py](src/openpi/models/lora.py)：LoRA 版 einsum/参数注入支持。
+- [src/openpi/models/utils/fsq_tokenizer.py](src/openpi/models/utils/fsq_tokenizer.py)：FSQ tokenizer 工具。
+- [src/openpi/models/*_test.py](src/openpi/models)：对应模型、tokenizer、LoRA 的测试文件。
+- [src/openpi/models/__init__.py](src/openpi/models/__init__.py)：models 包初始化文件。
+
+### src/openpi/models_pytorch
+
+PyTorch 版 PI0/PI05 和 GuidedVLA 增强模块，是当前训练优化的重点。
+
+- [src/openpi/models_pytorch/pi0_pytorch.py](src/openpi/models_pytorch/pi0_pytorch.py)：PyTorch 版 PI0/PI05 主模型，包含 flow matching loss、sample actions、object/skill/depth 辅助逻辑。
+- [src/openpi/models_pytorch/gemma_pytorch.py](src/openpi/models_pytorch/gemma_pytorch.py)：PyTorch PaliGemma + action expert 组合模型，负责 transformer forward 和辅助 head states。
+- [src/openpi/models_pytorch/preprocessing_pytorch.py](src/openpi/models_pytorch/preprocessing_pytorch.py)：PyTorch observation/image 预处理，包含 resize、augmentation、mask 规范化。
+- [src/openpi/models_pytorch/control_attention.py](src/openpi/models_pytorch/control_attention.py)：ControlNet 风格双分支 attention，支持 origin branch、control branch、zero conv fusion、headwise gate。
+- [src/openpi/models_pytorch/pi0_pytorch_test.py](src/openpi/models_pytorch/pi0_pytorch_test.py)：PyTorch PI0 测试。
+- [src/openpi/models_pytorch/gemma_pytorch_test.py](src/openpi/models_pytorch/gemma_pytorch_test.py)：PyTorch Gemma/PaliGemma 测试。
+
+### src/openpi/models_pytorch/attention
+
+- [src/openpi/models_pytorch/attention/attn_paths.py](src/openpi/models_pytorch/attention/attn_paths.py)：attention head 路由，将 head 分配到 supervised/object、standard SDPA、depth SDPA 等路径。
+- [src/openpi/models_pytorch/attention/attn_paths_test.py](src/openpi/models_pytorch/attention/attn_paths_test.py)：attention path 测试。
+- [src/openpi/models_pytorch/attention/__init__.py](src/openpi/models_pytorch/attention/__init__.py)：attention 子包初始化。
+
+### src/openpi/models_pytorch/depth
+
+- [src/openpi/models_pytorch/depth/model.py](src/openpi/models_pytorch/depth/model.py)：Depth Anything 3 wrapper，生成用于 depth attention 的多尺度 geometry tokens。
+- [src/openpi/models_pytorch/depth/depth_attention.py](src/openpi/models_pytorch/depth/depth_attention.py)：depth cross-attention / depth token KV projection。
+- [src/openpi/models_pytorch/depth/token_merging.py](src/openpi/models_pytorch/depth/token_merging.py)：将 depth feature map 下采样并合并成 token。
+- [src/openpi/models_pytorch/depth/token_merging_test.py](src/openpi/models_pytorch/depth/token_merging_test.py)：token merging 测试。
+- [src/openpi/models_pytorch/depth/__init__.py](src/openpi/models_pytorch/depth/__init__.py)：depth 子包初始化。
+
+### src/openpi/models_pytorch/transformers_replace
+
+替换或定制的 Hugging Face transformer 模型文件，主要用于 PyTorch 版 PaliGemma/Gemma/SigLIP 的兼容和改造。
+
+- [src/openpi/models_pytorch/transformers_replace/models/gemma/configuration_gemma.py](src/openpi/models_pytorch/transformers_replace/models/gemma/configuration_gemma.py)：Gemma config 定义。
+- [src/openpi/models_pytorch/transformers_replace/models/gemma/modeling_gemma.py](src/openpi/models_pytorch/transformers_replace/models/gemma/modeling_gemma.py)：Gemma PyTorch 模型实现。
+- [src/openpi/models_pytorch/transformers_replace/models/paligemma/modeling_paligemma.py](src/openpi/models_pytorch/transformers_replace/models/paligemma/modeling_paligemma.py)：PaliGemma PyTorch 模型实现。
+- [src/openpi/models_pytorch/transformers_replace/models/siglip/modeling_siglip.py](src/openpi/models_pytorch/transformers_replace/models/siglip/modeling_siglip.py)：SigLIP PyTorch 模型实现。
+- [src/openpi/models_pytorch/transformers_replace/models/siglip/check.py](src/openpi/models_pytorch/transformers_replace/models/siglip/check.py)：SigLIP 检查辅助脚本。
+
+### src/openpi/policies
+
+policy adapter 负责把不同环境或数据集格式转换为 openpi 统一模型输入，并把模型输出转换回环境动作格式。
+
+- [src/openpi/policies/policy.py](src/openpi/policies/policy.py)：policy 抽象、推理接口、policy recorder。
+- [src/openpi/policies/policy_config.py](src/openpi/policies/policy_config.py)：从 config/checkpoint/assets 构建可推理 policy。
+- [src/openpi/policies/aloha_policy.py](src/openpi/policies/aloha_policy.py)：ALOHA 输入/输出适配。
+- [src/openpi/policies/libero_policy.py](src/openpi/policies/libero_policy.py)：LIBERO 输入/输出适配。
+- [src/openpi/policies/droid_policy.py](src/openpi/policies/droid_policy.py)：DROID 输入/输出适配。
+- [src/openpi/policies/calvin_policy.py](src/openpi/policies/calvin_policy.py)：CALVIN 输入/输出适配。
+- [src/openpi/policies/oxe_policy.py](src/openpi/policies/oxe_policy.py)：OXE/bridge_dataset 输入/输出适配。
+- [src/openpi/policies/*_test.py](src/openpi/policies)：policy adapter 测试。
+
+### src/openpi/serving
+
+- [src/openpi/serving/websocket_policy_server.py](src/openpi/serving/websocket_policy_server.py)：websocket policy server，实现远程推理服务端。
+
+### src/openpi/shared
+
+共享工具层，不绑定具体环境或模型。
+
+- [src/openpi/shared/array_typing.py](src/openpi/shared/array_typing.py)：JAX/PyTorch array 类型别名、运行时类型检查、PyTree equality 检查。
+- [src/openpi/shared/attention_map.py](src/openpi/shared/attention_map.py)：attention map key 规范化工具。
+- [src/openpi/shared/download.py](src/openpi/shared/download.py)：远程文件/目录下载、本地缓存、权限处理。
+- [src/openpi/shared/image_tools.py](src/openpi/shared/image_tools.py)：图像 resize、padding、格式处理工具。
+- [src/openpi/shared/nnx_utils.py](src/openpi/shared/nnx_utils.py)：NNX JIT、PathRegex filter、state map 工具。
+- [src/openpi/shared/normalize.py](src/openpi/shared/normalize.py)：running stats、normalization stats 序列化和加载。
+- [src/openpi/shared/spec.py](src/openpi/shared/spec.py)：可序列化的模块/函数 spec 工具。
+- [src/openpi/shared/*_test.py](src/openpi/shared)：共享工具测试。
+- [src/openpi/shared/__init__.py](src/openpi/shared/__init__.py)：shared 包初始化。
+
+### src/padp
+
+PADP 迁移相关目录，目前主要是规划和待办内容。
+
+- [src/padp/Todo.md](src/padp/Todo.md)：PADP 迁移待办、设计和实现记录。
+- [src/padp/models_pytorch](src/padp/models_pytorch)：PADP PyTorch 模型迁移预留目录。
+
+## third_party
+
+`third_party` 保存外部项目源码或子模块，用于环境评估、数据转换或辅助模型。阅读 PI0/PI05 主线时通常先看 `src/openpi` 和 `examples`，需要运行特定环境时再进入对应外部项目。
+
+### third_party/aloha
+
+- [third_party/aloha](third_party/aloha)：ALOHA 相关外部源码，用于真实或仿真 ALOHA 环境支持。
+
+### third_party/depth_anything
+
+- [third_party/depth_anything](third_party/depth_anything)：Depth Anything 相关外部源码，为 GuidedVLA depth 模块提供基础模型或依赖。
+
+### third_party/libero
+
+- [third_party/libero](third_party/libero)：LIBERO 环境外部源码。
+
+### third_party/LIBERO-plus
+
+- [third_party/LIBERO-plus](third_party/LIBERO-plus)：LIBERO Plus 外部源码。
+
+### third_party/RoboTwin
+
+- [third_party/RoboTwin](third_party/RoboTwin)：RoboTwin 环境外部源码。
+
+## 典型训练链路对应文件
+
+以 `pi05_libero` 为例：
+
+```text
+scripts/train_pytorch.py 或 scripts/train.py
+-> src/openpi/training/config.py 选择 TrainConfig
+-> src/openpi/training/data_loader.py 创建 LeRobot data loader
+-> src/openpi/transforms.py 串联数据转换
+-> src/openpi/policies/libero_policy.py 做 LIBERO 字段适配
+-> src/openpi/models/model.py 生成 Observation
+-> src/openpi/models_pytorch/pi0_pytorch.py 或 src/openpi/models/pi0.py 计算 loss
+-> src/openpi/training/checkpoints.py 保存 checkpoint
+```
+
+## 典型推理链路对应文件
+
+```text
+scripts/serve_policy.py
+-> src/openpi/training/config.py 读取 config
+-> src/openpi/policies/policy_config.py 创建 policy
+-> src/openpi/models/model.py 或 src/openpi/models_pytorch/pi0_pytorch.py 加载模型
+-> src/openpi/serving/websocket_policy_server.py 启动服务
+-> packages/openpi-client/src/openpi_client/websocket_client_policy.py 客户端调用
+-> examples/*/main.py 与具体环境交互
+```
+
+## 新增环境时通常要改的地方
+
+1. 在 `examples/<env_name>` 新增评估入口、README、环境 wrapper。
+2. 在 `src/openpi/policies/<env_name>_policy.py` 新增 `Inputs/Outputs` adapter。
+3. 在 `src/openpi/training/config.py` 新增对应 `DataConfigFactory` 和 `TrainConfig`。
+4. 如果数据是 LeRobot 格式，优先复用 `create_torch_data_loader`。
+5. 如果数据是 RLDS/流式格式，再接入 `create_rlds_data_loader` 或新增 dataset wrapper。
+6. 如果要支持 serve/eval 环境枚举，检查 [scripts/serve_policy.py](scripts/serve_policy.py) 和对应 `examples/<env_name>/main.py`。
+
+## 新增 GuidedVLA 辅助监督时通常要改的地方
+
+1. 在 `config.py` 的 `Pi0Config` 或相关 `TrainConfig` 中增加开关和权重。
+2. 在 `data_loader.py` / `transforms.py` 中保证 batch 里有监督字段。
+3. 在 `models_pytorch/pi0_pytorch.py` 中读取字段并计算 auxiliary loss。
+4. 如果是 attention 相关监督，检查 `gemma_pytorch.py` 和 `attention/attn_paths.py`。
+5. 如果是 depth 几何信息，检查 `depth/model.py`、`depth/depth_attention.py`、`depth/token_merging.py`。
+6. 在 `train_pytorch.py` 中确认日志、checkpoint、DDP、mixed precision 路径都能正确处理新增模块。

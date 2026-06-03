@@ -1,0 +1,64 @@
+name: mimicgen_abs
+
+shape_meta: &shape_meta
+  obs:
+    agentview_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape: [3, 84, 84]
+      type: rgb
+    robot0_eef_pos:
+      shape: [3]
+    robot0_eef_quat:
+      shape: [4]
+    robot0_gripper_qpos:
+      shape: [2]
+  action:
+    shape: [10]
+
+abs_action: &abs_action True
+
+env_runner:
+  _target_: diffusion_policy.env_runner.robomimic_image_runner_padp.RobomimicImageRunner # 环境运行器类
+  dataset_path: ${dataset_path} # 数据集路径
+  shape_meta: *shape_meta # 形状元数据
+  n_train: 6              # 从训练数据集中选择 n_train个演示(已知任务状态​​、真实的人类演示轨迹)
+  n_train_vis: 2          # 为训练环境录制视频的数量
+  train_start_idx: 0      # 训练演示的起始索引
+  n_test: 44              # 创建 n_test个测试环境(随机初始化的环境)
+  n_test_vis: 2           # 为测试环境录制视频的数量
+  test_start_seed: 100000 # 测试环境的起始随机种子
+  max_steps: ${get_max_steps:${task_name}}  # 在每个环境中运行策略最多 max_steps步
+  n_obs_steps: ${n_obs_steps}               # 使用 n_obs_steps历史观测预测 n_action_steps动作
+  n_action_steps: ${n_action_steps}         # 根据 past_action和 abs_action处理动作
+  render_obs_key: 'agentview_image' # 用于渲染的观测键名
+  fps: 10                 # 视频帧率
+  crf: 21                 # 视频质量参数，越低质量越高
+  past_action: ${past_action_visible} # 是否将过去的动作作为观测输入
+  abs_action: *abs_action # 是否使用绝对动作（而非相对动作）
+  tqdm_interval_sec: 1.0  # 进度条更新时间间隔
+  n_envs: 25              # 并行环境数量
+  # 记录每个环境的最高奖励,保存指定环境的视频,计算平均分数和推理时间
+  # 排查机器人状态时，再在 yaml 或命令行里显式打开：
+  # debug_save_actions: true
+  # debug_save_details: true
+  # debug_save_states: true
+dataset:
+  _target_: ${dataset}
+  n_demo: ${n_demo}
+  shape_meta: *shape_meta
+  dataset_path: ${dataset_path}
+  horizon: ${horizon}
+  # pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
+  # pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${dataset_obs_steps}
+  n_action_steps: ${n_action_steps}
+  abs_action: *abs_action
+  rotation_rep: 'rotation_6d'
+  use_legacy_normalizer: False
+  use_cache: True
+  seed: 42
+  val_ratio: 0 # 0.02
+  batch_size: ${dataloader.batch_size}
+  num_epochs: ${training.num_epochs}
