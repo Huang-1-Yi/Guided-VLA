@@ -1,16 +1,16 @@
 # LIBERO Benchmark
 
-This example runs the LIBERO benchmark: https://github.com/Lifelong-Robot-Learning/LIBERO
+该示例用于运行 LIBERO benchmark：https://github.com/Lifelong-Robot-Learning/LIBERO
 
-Note: When updating requirements.txt in this directory, there is an additional flag `--extra-index-url https://download.pytorch.org/whl/cu113` that must be added to the `uv pip compile` command.
+注意：如果需要更新本目录下的 `requirements.txt`，在执行 `uv pip compile` 时必须额外添加 `--extra-index-url https://download.pytorch.org/whl/cu113`。
 
-This example requires git submodules to be initialized. Don't forget to run:
+该示例依赖已初始化的 git submodule。请先运行：
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## With Docker (recommended)
+## 使用 Docker（推荐）
 
 ```bash
 # Grant access to the X11 server:
@@ -23,8 +23,8 @@ SERVER_ARGS="--env LIBERO" docker compose -f examples/libero/compose.yml up --bu
 MUJOCO_GL=glx SERVER_ARGS="--env LIBERO" docker compose -f examples/libero/compose.yml up --build
 ```
 
-You can customize the loaded checkpoint by providing additional `SERVER_ARGS` (see `scripts/serve_policy.py`), and the LIBERO task suite by providing additional `CLIENT_ARGS` (see `examples/libero/main.py`).
-For example:
+可以通过额外的 `SERVER_ARGS` 自定义要加载的 checkpoint（见 `scripts/serve_policy.py`），也可以通过额外的 `CLIENT_ARGS` 自定义 LIBERO task suite（见 `examples/libero/main.py`）。
+例如：
 
 ```bash
 # To load a custom checkpoint (located in the top-level openpi/ directory):
@@ -34,9 +34,9 @@ export SERVER_ARGS="--env LIBERO policy:checkpoint --policy.config pi05_libero -
 export CLIENT_ARGS="--args.task-suite-name libero_10"
 ```
 
-## Without Docker (not recommended)
+## 不使用 Docker（不推荐）
 
-Terminal window 1:
+终端窗口 1：
 
 ```bash
 # Create virtual environment
@@ -54,7 +54,7 @@ python examples/libero/main.py
 MUJOCO_GL=glx python examples/libero/main.py
 ```
 
-Terminal window 2:
+终端窗口 2：
 
 ```bash
 # Run the server
@@ -63,8 +63,7 @@ uv run scripts/serve_policy.py --env LIBERO
 
 ## Results
 
-If you want to reproduce the following numbers, you can evaluate the checkpoint at `gs://openpi-assets/checkpoints/pi05_libero/`. This
-checkpoint was trained in openpi with the `pi05_libero` config.
+如果希望复现下表结果，可以评估 `gs://openpi-assets/checkpoints/pi05_libero/` 处的 checkpoint。该 checkpoint 使用 openpi 中的 `pi05_libero` 配置训练得到。
 
 | Model | Libero Spatial | Libero Object | Libero Goal | Libero 10 | Average |
 |-------|---------------|---------------|-------------|-----------|---------|

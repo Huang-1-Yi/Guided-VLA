@@ -18,6 +18,7 @@ import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
+import openpi.policies.calvin_policy as calvin_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.attention_map as _attention_map
@@ -548,6 +549,50 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotCalvinDataConfig(DataConfigFactory):
+    """Data transforms for CALVIN LeRobot datasets.
+
+    The default dataset is InternRobotics/InternData-Calvin_ABC, which stores
+    CALVIN observations and actions in split fields. The policy adapter packs
+    those fields into OpenPI's canonical state/action keys.
+    """
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image": "video.image_base",
+                        "wrist_image": "video.image_wrist",
+                        "state_ee_pos": "state.ee_pos",
+                        "state_ee_rot": "state.ee_rot",
+                        "state_gripper": "state.gripper",
+                        "action_delta_ee_pos": "action.delta_ee_pos",
+                        "action_delta_ee_rot": "action.delta_ee_rot",
+                        "action_gripper": "action.gripper",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[calvin_policy.CalvinInputs(model_type=model_config.model_type)],
+            outputs=[calvin_policy.CalvinOutputs()],
+        )
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=ModelTransformFactory()(model_config),
+            horizon_sequence_keys=("action.delta_ee_pos", "action.delta_ee_rot", "action.gripper"),
+            use_quantile_norm=False,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
     name: tyro.conf.Suppress[str]
@@ -933,6 +978,29 @@ _CONFIGS = [
         ema_decay=0.999,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=30_000,
+    ),
+    #
+    # CALVIN fine-tuning configs.
+    #
+    TrainConfig(
+        name="pi05_calvin",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=LeRobotCalvinDataConfig(
+            repo_id="InternRobotics/InternData-Calvin_ABC",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30_000,
+        num_workers=8,
     ),
     #
     # Fine-tuning Aloha configs.

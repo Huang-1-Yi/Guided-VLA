@@ -1,28 +1,28 @@
-# RoboTwin Evaluation
+# RoboTwin 评估
 
-This example evaluates an OpenPI / GuidedVLA policy on [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin) without modifying the RoboTwin codebase.
+该示例用于在 [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin) 上评估 OpenPI / GuidedVLA policy，并且不需要修改 RoboTwin 代码库。
 
-Recommended setup:
+推荐设置：
 
 ```bash
 git submodule update --init --recursive third_party/RoboTwin
 ```
 
-The integration is aligned with RoboTwin's `policy/pi05` branch:
+该集成与 RoboTwin 的 `policy/pi05` 分支保持一致：
 
-- observation/state order is `[left_arm(6), left_gripper, right_arm(6), right_gripper]`
-- actions are **absolute** joint targets in the same 14-D order
-- grippers are already normalized to `[0, 1]`
-- training still keeps `use_delta_joint_actions=True`, so actions are converted to deltas for the model and converted back to absolute qpos at inference
-- `adapt_to_pi=False` is required for RoboTwin and is baked into the RoboTwin configs
+- observation/state 顺序为 `[left_arm(6), left_gripper, right_arm(6), right_gripper]`
+- action 是相同 14 维顺序下的 **absolute** joint target
+- gripper 已经归一化到 `[0, 1]`
+- 训练时仍然保持 `use_delta_joint_actions=True`，因此 action 会先转换为模型使用的 delta，并在推理时转换回 absolute qpos
+- RoboTwin 必须使用 `adapt_to_pi=False`，该设置已经写入 RoboTwin configs
 
-## 1. Prepare LeRobot data
+## 1. 准备 LeRobot 数据
 
-Assume you already have a LeRobot-format RoboTwin dataset available locally or on the Hugging Face Hub.
+假设你已经在本地或 Hugging Face Hub 上准备好了 LeRobot 格式的 RoboTwin 数据集。
 
-## 2. Compute norm stats
+## 2. 计算 norm stats
 
-The RoboTwin configs use the fixed asset id `robotwin`, so norm stats should be written there.
+RoboTwin configs 使用固定的 asset id `robotwin`，因此 norm stats 应写入该 asset id 下。
 
 ```bash
 uv run scripts/compute_norm_stats.py pi0_base_aloha_robotwin_full \
@@ -31,11 +31,11 @@ uv run scripts/compute_norm_stats.py pi0_base_aloha_robotwin_full \
   --asset-id robotwin
 ```
 
-You can swap `pi0_base_aloha_robotwin_full` for any of the RoboTwin configs below.
+下面命令中的 `pi0_base_aloha_robotwin_full` 可以替换为任意 RoboTwin config。
 
-## 3. Train
+## 3. 训练
 
-Available RoboTwin configs:
+可用的 RoboTwin configs：
 
 - `pi05_aloha_robotwin_full`
 - `pi05_aloha_robotwin_lora`
@@ -45,19 +45,18 @@ Available RoboTwin configs:
 - `pi0_fast_aloha_robotwin_lora`
 - `pi0_base_aloha_robotwin_object_depth_skill`
 
-Notes:
+说明：
 
-- `scripts/train_pytorch.py` uses DDP via `torchrun`; `--nproc_per_node` controls PyTorch parallelism.
-- `fsdp_devices` is only consumed by the JAX trainer (`scripts/train.py`) and is ignored by the PyTorch trainer.
-- `pi0_base_aloha_robotwin_object_depth_skill` additionally requires `observation.skill_id`
-  in the dataset; `skill_soft` will be constructed online during loading.
+- `scripts/train_pytorch.py` 通过 `torchrun` 使用 DDP；`--nproc_per_node` 控制 PyTorch 并行度。
+- `fsdp_devices` 只被 JAX trainer（`scripts/train.py`）使用，PyTorch trainer 会忽略它。
+- `pi0_base_aloha_robotwin_object_depth_skill` 还要求数据集中包含 `observation.skill_id`；加载数据时会在线构造 `skill_soft`。
 
-Backward-compatible aliases from the RoboTwin `policy/pi05` branch are also available:
+RoboTwin `policy/pi05` 分支中的向后兼容别名也可用：
 
 - `pi05_aloha_full_base`
 - `pi05_base_aloha_lora`
 
-Example:
+示例：
 
 ```bash
 torchrun --standalone --nnodes=1 --nproc_per_node=4 scripts/train_pytorch.py \
@@ -67,7 +66,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=4 scripts/train_pytorch.py \
   --local_root_dir /path/to/lerobot/root
 ```
 
-## 4. Serve the checkpoint
+## 4. 启动 checkpoint 服务
 
 ```bash
 uv run scripts/serve_policy.py policy:checkpoint \
@@ -75,9 +74,9 @@ uv run scripts/serve_policy.py policy:checkpoint \
   --policy.dir=checkpoints/pi0_base_aloha_robotwin_full/<exp_name>/<step>
 ```
 
-## 5. Run RoboTwin evaluation
+## 5. 运行 RoboTwin 评估
 
-Run this inside an environment that already has RoboTwin installed through the repository submodule at `third_party/RoboTwin`.
+请在已经通过 `third_party/RoboTwin` submodule 安装好 RoboTwin 的环境中运行：
 
 ```bash
 bash examples/robotwin/run.sh \
@@ -88,4 +87,4 @@ bash examples/robotwin/run.sh \
   --args.record-videos
 ```
 
-Results are written under `data/robotwin/eval/<task>/<task_config>/`.
+结果会写入 `data/robotwin/eval/<task>/<task_config>/`。

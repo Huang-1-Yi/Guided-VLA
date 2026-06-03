@@ -1,0 +1,723 @@
+# DP/PADP 架构代码迁移到 GuidedVLA/pi05 风格训练与推理结构
+
+本文档用于规划第二阶段迁移：把 `C:\QClaw\PADP` 中的 diffusion-policy / PADP 训练代码、模型代码、推理代码迁移到 `C:\QClaw\GuidedVLA`，并让它运行在 GuidedVLA 当前的训练、checkpoint、policy server 和 example client 结构下。
+
+本文档是独立上下文说明，后续可以直接基于本文档继续问答，无需依赖之前聊天记录。
+
+## 迁移目标
+
+目标不是把 PADP 改造成原生 `Pi0Config(pi05=True)` 模型，而是让 DP/PADP 算法运行在 GuidedVLA/pi05 风格的工程结构下：
+
+```text
+LeRobot dataset
+  -> openpi.training.config.TrainConfig
+  -> scripts/compute_norm_stats.py
+  -> scripts/train_pytorch.py
+  -> checkpoints/<config>/<exp>/<step>/
+  -> scripts/serve_policy.py policy:checkpoint
+  -> examples/<env>/main.py websocket client
+```
+
+最终希望新增类似配置：
+
+```text
+dp_robomimic_stack_d1
+padp_robomimic_stack_d1
+pi05_style_padp_robomimic_stack_d1
+```
+
+这里的 `pi05_style` 指工程结构、数据流、checkpoint、serve 方式接近 GuidedVLA/pi05，不代表模型本体一定是 PaliGemma + Gemma action expert。
+
+## 不在本文档范围内
+
+本文档不负责 Robomimic 数据集转 LeRobot。数据迁移应在第一阶段完成。
+
+第一阶段目标应是：
+
+```text
+Robomimic/PADP HDF5 -> LeRobot dataset -> pi05 能训练/serve
+```
+
+如果数据还没有迁好，应先完成：
+
+```text
+GuidedVLA/Robomimic数据集迁移_README.md
+```
+
+本文档从以下前提开始：
+
+- 已经有一个 LeRobot 格式数据集。
+- 已经能通过 `scripts/compute_norm_stats.py` 计算 `state` 和 `actions` 归一化统计。
+- 已经有 `src/openpi/policies/robomimic_policy.py` 或类似 adapter，把环境数据转成 openpi 通用字段。
+- 已经确认 pi05 基线可以在该数据上训练或至少跑通 dataloader。
+
+## 原 PADP 代码来源
+
+主要来源目录：
+
+```text
+C:\QClaw\PADP\diffusion_policy\
+```
+
+重点迁移对象：
+
+```text
+common/
+model/
+policy/
+workspace/
+scripts/
+```
+
+环境相关代码暂时不进入核心库：
+
+```text
+env/
+env_runner/
+gym_util/
+real_world/
+shared_memory/
+```
+
+这些放到 `examples/` 下，作为评估 client 或真实机器人 client。
+
+## 推荐目标结构
+
+建议在 GuidedVLA 中新增：
+
+```text
+GuidedVLA/
+  src/openpi/models_pytorch/dp/
+    conditional_unet1d.py
+    mask_generator.py
+    schedulers.py
+    diffusion_unet_image_policy.py
+    normalizer.py
+    vision/
+
+  src/openpi/models_pytorch/padp/
+    conditional_unet1d_padp.py
+    schedulers_padp.py
+    sliding_window_policy.py
+    position_noise.py
+
+  src/openpi/policies/
+    dp_policy.py
+    padp_policy.py
+
+  src/openpi/training/
+    config.py
+    dp_train_adapter.py             # 可选，若 train_pytorch.py 不适合直接扩展
+
+  examples/robomimic/
+    main.py                         # Robomimic eval client
+    env/
+    env_runner/
+    gym_util/
+    README.md
+```
+
+不建议长期保留：
+
+```text
+src/openpi/padp_legacy/workspace/
+```
+
+但迁移初期可以临时保留 legacy workspace，用于对齐行为。
+
+## 总体迁移策略
+
+迁移分三层做，不要一次性整体搬运。
+
+### 第一层：模型层
+
+把原 DP/PADP 的神经网络模块迁入：
+
+```text
+src/openpi/models_pytorch/dp/
+src/openpi/models_pytorch/padp/
+```
+
+这层只关心：
+
+- U-Net
+- scheduler
+- mask generator
+- obs encoder
+- action sampling
+- loss 计算
+
+不要在模型层写：
+
+- Hydra
+- wandb
+- env runner
+- checkpoint 保存
+- robomimic env reset
+- real robot 控制
+
+### 第二层：policy adapter 层
+
+把输入输出适配放到：
+
+```text
+src/openpi/policies/dp_policy.py
+src/openpi/policies/padp_policy.py
+```
+
+这层负责：
+
+- 把 dataset/env observation 转成模型需要的 `obs_dict`
+- 把模型输出 action chunk 转成环境 action
+- 定义 `DpInputs` / `DpOutputs`
+- 定义 `PadpInputs` / `PadpOutputs`
+
+这层不负责训练 loop。
+
+### 第三层：训练与 serve 集成层
+
+把训练配置注册到：
+
+```text
+src/openpi/training/config.py
+```
+
+把实际训练接入：
+
+```text
+scripts/train_pytorch.py
+```
+
+把推理接入：
+
+```text
+scripts/serve_policy.py
+```
+
+目标是最终通过标准命令运行：
+
+```bash
+uv run scripts/compute_norm_stats.py padp_robomimic_stack_d1
+uv run scripts/train_pytorch.py padp_robomimic_stack_d1 --exp_name exp01
+uv run scripts/serve_policy.py policy:checkpoint \
+  --policy.config=padp_robomimic_stack_d1 \
+  --policy.dir=checkpoints/padp_robomimic_stack_d1/exp01/<step>
+```
+
+## 第 0 步：冻结原始 DP/PADP 基线
+
+迁移前必须记录原始行为。
+
+建议保存：
+
+```text
+GuidedVLA/examples/robomimic/DP_PADP_BASELINE.md
+```
+
+内容包括：
+
+- 原 config 文件路径
+- 原数据路径
+- 原 checkpoint 路径
+- 原训练命令
+- 原评估命令
+- 成功率
+- horizon
+- n_obs_steps
+- n_action_steps
+- num_inference_steps
+- prediction_type
+- noise scheduler
+- action 是 absolute 还是 delta
+- normalizer 类型
+- image resize/crop
+- obs key/action key
+
+如果没有这一步，迁移后成功率不一致会很难定位。
+
+## 第 1 步：迁移最小 DP 模型
+
+先迁普通 Diffusion Policy，不要一开始迁 PADP 特殊逻辑。
+
+建议来源：
+
+```text
+PADP/diffusion_policy/policy/robomimic/diffusion_unet_hybrid_image_policy.py
+PADP/diffusion_policy/model/diffusion/
+PADP/diffusion_policy/model/vision/
+PADP/diffusion_policy/common/
+```
+
+目标文件：
+
+```text
+GuidedVLA/src/openpi/models_pytorch/dp/
+```
+
+第一版只保留：
+
+```python
+class DiffusionUnetImagePolicy(torch.nn.Module):
+    def compute_loss(self, batch: dict) -> torch.Tensor:
+        ...
+
+    @torch.no_grad()
+    def sample_actions(self, observation: dict) -> torch.Tensor:
+        ...
+```
+
+先不要实现：
+
+- EMA 细节
+- 复杂 scheduler 变体
+- 多种 workspace
+- rollout 评估
+- per-position metric
+
+## 第 2 步：定义 GuidedVLA 风格的 DP/PADP 模型配置
+
+当前 GuidedVLA 的模型配置一般是 `Pi0Config` 这种 `BaseModelConfig` 子类。
+
+DP/PADP 可以新增：
+
+```text
+src/openpi/models/dp_config.py
+src/openpi/models/padp_config.py
+```
+
+或如果只支持 PyTorch，可先做：
+
+```python
+@dataclasses.dataclass(frozen=True)
+class PadpConfig(_model.BaseModelConfig):
+    action_dim: int = 7
+    action_horizon: int = 10
+    n_obs_steps: int = 1
+    num_inference_steps: int = 10
+    ...
+
+    def load_pytorch(self, train_config, weight_path):
+        ...
+```
+
+关键是让 `policy_config.create_trained_policy()` 能通过：
+
+```python
+train_config.model.load_pytorch(train_config, weight_path)
+```
+
+加载模型。
+
+如果一开始不想改 `BaseModelConfig`，可以先写临时 adapter，但最终建议做成模型配置类，否则难以接入 `serve_policy.py`。
+
+## 第 3 步：接入 train_pytorch.py
+
+当前 `scripts/train_pytorch.py` 主要服务 GuidedVLA/Pi0 PyTorch 模型。
+
+迁移 DP/PADP 时有两种选择。
+
+### 方案 A：扩展 train_pytorch.py
+
+让 `train_pytorch.py` 判断模型是否是 DP/PADP：
+
+```python
+if isinstance(config.model, PadpConfig):
+    loss = model.compute_loss(batch)
+else:
+    loss = model.compute_loss(...)
+```
+
+优点：
+
+- 最终入口统一。
+- checkpoint、wandb、resume 统一。
+
+缺点：
+
+- 需要理解 `train_pytorch.py` 当前 batch、DDP、checkpoint 逻辑。
+
+### 方案 B：新增 train_dp_pytorch.py
+
+新增：
+
+```text
+GuidedVLA/scripts/train_dp_pytorch.py
+```
+
+但仍然使用：
+
+```python
+config = _config.get_config(config_name)
+data_loader = openpi.training.data_loader
+checkpoints = openpi.training.checkpoints
+```
+
+优点：
+
+- 改动更小。
+- 方便先跑通 DP/PADP。
+
+缺点：
+
+- 入口不完全统一。
+- 后续还要合并回 `train_pytorch.py`。
+
+推荐路线：
+
+```text
+先用方案 B 快速跑通，再合并到方案 A。
+```
+
+## 第 4 步：训练 batch 契约
+
+无论用哪个 train 脚本，DP/PADP 模型第一版应吃这样的 batch：
+
+```python
+batch = {
+    "state": Tensor[B, ...],
+    "image": {
+        "base_0_rgb": Tensor[B, T, H, W, C] 或 Tensor[B, T, C, H, W],
+        "left_wrist_0_rgb": ...,
+    },
+    "actions": Tensor[B, action_horizon, action_dim],
+    "prompt": ...
+}
+```
+
+如果 DP/PADP 不需要语言，`prompt` 可以忽略，但数据链路仍然保留 prompt，方便和 pi05 风格一致。
+
+最重要的字段：
+
+```text
+state
+image
+actions
+```
+
+## 第 5 步：normalizer 策略
+
+不要继续使用 PADP 原来的 workspace 内部 normalizer 作为主入口。
+
+目标是统一使用 GuidedVLA 的：
+
+```text
+scripts/compute_norm_stats.py
+assets/<config>/<asset_id>/
+openpi.transforms.Normalize
+openpi.transforms.Unnormalize
+```
+
+如果 DP/PADP 模型内部仍需要自己的 `LinearNormalizer`，建议做一个桥接：
+
+```python
+def set_openpi_norm_stats(norm_stats):
+    ...
+```
+
+优先保证：
+
+- `state` 归一化一致。
+- `actions` 归一化一致。
+- 推理输出能正确反归一化。
+
+不要同时在 transform 层和模型内部重复 normalize。
+
+推荐第一版：
+
+```text
+transform 层负责 Normalize/Unnormalize
+DP/PADP 模型内部假设输入已经归一化
+```
+
+## 第 6 步：checkpoint 格式
+
+GuidedVLA 当前 PyTorch checkpoint 通常通过：
+
+```text
+model.safetensors
+assets/<asset_id>/norm_stats.json
+```
+
+服务端加载路径：
+
+```python
+policy_config.create_trained_policy(...)
+```
+
+会检查 checkpoint 目录是否存在：
+
+```text
+model.safetensors
+```
+
+因此 DP/PADP 迁移后也应保存：
+
+```text
+checkpoints/padp_robomimic_stack_d1/exp01/<step>/
+  model.safetensors
+  assets/<asset_id>/norm_stats.json
+  config.json 或 metadata.json
+```
+
+如果沿用原 PADP `.ckpt`，就需要额外写 loader。推荐迁移到 `safetensors`。
+
+## 第 7 步：推理接口
+
+DP/PADP 模型应提供和 GuidedVLA Policy 兼容的接口。
+
+推荐模型侧：
+
+```python
+@torch.no_grad()
+def sample_actions(self, observation, **kwargs):
+    return actions
+```
+
+或兼容原 DP：
+
+```python
+@torch.no_grad()
+def predict_action(self, obs_dict):
+    return {"actions": actions, "action_pred": action_chunk}
+```
+
+然后在 wrapper 中统一成 `actions`：
+
+```python
+return {"actions": action_chunk}
+```
+
+serve 侧应保持：
+
+```bash
+uv run scripts/serve_policy.py policy:checkpoint \
+  --policy.config=padp_robomimic_stack_d1 \
+  --policy.dir=checkpoints/padp_robomimic_stack_d1/exp01/<step>
+```
+
+不建议一开始加 `--env PADP` 默认项。等路径稳定后再加。
+
+## 第 8 步：评估 client
+
+评估环境不要放进 `src/openpi`。
+
+Robomimic/MimicGen 评估代码放：
+
+```text
+GuidedVLA/examples/robomimic/
+```
+
+真实机器人代码放：
+
+```text
+GuidedVLA/examples/franka_real/
+```
+
+评估模式统一为：
+
+```text
+环境进程
+  -> observation
+  -> openpi-client websocket
+  -> policy server
+  -> action chunk
+  -> env.step(action)
+```
+
+这样可以避免把 Robomimic、MuJoCo、真实机器人依赖污染主训练环境。
+
+## 第 9 步：PADP 特有逻辑迁移
+
+普通 DP 跑通后，再迁 PADP。
+
+PADP 关键逻辑包括：
+
+- position-wise noise schedule
+- sliding window inference buffer
+- window loss weights
+- horizon-position 噪声强度
+- `reset_buffer()` 或等价推理状态清理
+- per-position MSE / NMSE 评估
+
+建议目标文件：
+
+```text
+src/openpi/models_pytorch/padp/
+  sliding_window_policy.py
+  schedulers_padp.py
+  position_noise.py
+```
+
+第一版 PADP 配置示例：
+
+```python
+TrainConfig(
+    name="padp_robomimic_stack_d1",
+    model=PadpConfig(
+        action_dim=7,
+        action_horizon=40,
+        n_obs_steps=1,
+        n_action_steps=1,
+        noise_schedule_mode="positionwise",
+        window_loss_weights="exponential",
+        window_exp_gamma=0.2,
+    ),
+    data=LeRobotRobomimicDataConfig(...),
+    ...
+)
+```
+
+注意：PADP 原始 `horizon=40` 和 pi05 常见 `action_horizon=10` 不一定一致。不要为了名字像 pi05 而强行改 horizon，否则成功率会变化。
+
+## 第 10 步：兼容原始成功率的关键检查
+
+成功率不一致时按顺序排查：
+
+1. **数据读取是否一致**
+   - 图像是否同一 camera。
+   - 图像是否同一颜色通道。
+   - resize/crop 是否一致。
+   - state 维度和顺序是否一致。
+   - action 维度和顺序是否一致。
+
+2. **action 语义是否一致**
+   - absolute vs delta。
+   - gripper 正负号。
+   - rotation 表示方式。
+   - action clipping。
+
+3. **normalizer 是否一致**
+   - 是否重复 normalize。
+   - 是否漏掉 unnormalize。
+   - state/action stats 是否合理。
+
+4. **时序是否一致**
+   - `horizon`
+   - `n_obs_steps`
+   - `n_action_steps`
+   - `num_inference_steps`
+   - 执行动作 chunk 的频率
+
+5. **推理状态是否一致**
+   - PADP 是否需要 reset buffer。
+   - episode 开始时是否清空历史。
+   - action queue 是否和原来一致。
+
+6. **环境是否一致**
+   - Robomimic/MimicGen 版本。
+   - env reset seed。
+   - max steps。
+   - task success checker。
+
+## 推荐迁移里程碑
+
+### M1：DP 模型能构建
+
+目标：
+
+```bash
+python -m py_compile src/openpi/models_pytorch/dp/*.py
+```
+
+并能实例化模型。
+
+### M2：DP 模型能吃一个 batch
+
+目标：
+
+```text
+LeRobot batch -> transforms -> DP compute_loss -> loss scalar
+```
+
+不要求训练成功，只要求 loss 非 NaN。
+
+### M3：DP 训练脚本能跑 100 step
+
+目标：
+
+```bash
+uv run scripts/train_dp_pytorch.py dp_robomimic_stack_d1 \
+  --exp_name smoke \
+  --num_train_steps 100
+```
+
+或统一入口：
+
+```bash
+uv run scripts/train_pytorch.py dp_robomimic_stack_d1 \
+  --exp_name smoke \
+  --num_train_steps 100
+```
+
+### M4：checkpoint 能 serve
+
+目标：
+
+```bash
+uv run scripts/serve_policy.py policy:checkpoint \
+  --policy.config=dp_robomimic_stack_d1 \
+  --policy.dir=checkpoints/dp_robomimic_stack_d1/smoke/<step>
+```
+
+client 能拿到 action chunk。
+
+### M5：普通 DP 成功率接近原 DP
+
+先对齐普通 DP，再迁 PADP。
+
+### M6：PADP 能训练
+
+迁入 position-wise noise、sliding window loss。
+
+### M7：PADP 能 serve
+
+episode 开始时能 reset buffer，action chunk 和原推理逻辑一致。
+
+### M8：PADP 成功率接近原代码
+
+达到原始 PADP 评估成功率后，再整理代码、删 legacy。
+
+## 文件迁移建议表
+
+| 原 PADP 路径 | GuidedVLA 目标路径 | 说明 |
+|---|---|---|
+| `diffusion_policy/model/diffusion/*` | `src/openpi/models_pytorch/dp/` | 普通 DP U-Net、mask、scheduler |
+| `diffusion_policy/model/vision/*` | `src/openpi/models_pytorch/dp/vision/` | DP/PADP 视觉 encoder |
+| `diffusion_policy/policy/robomimic/diffusion_unet_hybrid_image_policy.py` | `src/openpi/models_pytorch/dp/diffusion_unet_image_policy.py` | 模型主体 |
+| `diffusion_policy/policy/robomimic/*padp*` | `src/openpi/models_pytorch/padp/` | PADP 模型主体 |
+| `diffusion_policy/policy/schedulers_padp.py` | `src/openpi/models_pytorch/padp/schedulers_padp.py` | PADP scheduler |
+| `diffusion_policy/common/*` | `src/openpi/shared/` 或 `src/openpi/models_pytorch/dp/` | 通用工具进 shared，模型专属工具进 dp/padp |
+| `diffusion_policy/workspace/*` | 临时 `src/openpi/padp_legacy/workspace/` | 只作过渡，最终合并到 train 脚本 |
+| `diffusion_policy/env_runner/*` | `examples/robomimic/env_runner/` | 评估 client 侧 |
+| `diffusion_policy/env/*` | `examples/robomimic/env/` | 环境侧 |
+| `diffusion_policy/gym_util/*` | `examples/robomimic/gym_util/` | 环境侧 |
+| `diffusion_policy/real_world/*` | `examples/franka_real/` | 真实机器人侧 |
+| `diffusion_policy/shared_memory/*` | `examples/franka_real/shared_memory/` | 若只服务实机，放 example |
+| `diffusion_policy/scripts/*` | `examples/robomimic/` 或 `scripts/` | 数据/评估脚本进 example，通用训练入口进 scripts |
+| `diffusion_policy/test/*` | 对应模块旁 `*_test.py` 或 `examples/robomimic/test_*` | 贴近被测代码 |
+
+## 最小实现顺序
+
+推荐从这个顺序开始：
+
+1. 新建 `src/openpi/models_pytorch/dp/`。
+2. 迁普通 DP 模型最小依赖。
+3. 新建 `src/openpi/models/dp_config.py` 或 `padp_config.py`。
+4. 新建 `src/openpi/policies/dp_policy.py`。
+5. 在 `config.py` 新增 `dp_robomimic_stack_d1`。
+6. 新建 `scripts/train_dp_pytorch.py` 跑通 100 step。
+7. 接入 checkpoint 保存为 `model.safetensors`。
+8. 接入 `serve_policy.py`。
+9. 跑通 simple websocket client。
+10. 再迁 PADP position-wise 逻辑。
+
+## 重要原则
+
+1. 先行为等价，再整理结构。
+2. 先普通 DP，再 PADP。
+3. 先训练 100 step，再完整训练。
+4. 先 simple client，再完整 Robomimic eval。
+5. 不要同时改数据、模型、normalizer、评估环境。
+6. 不要为了名字叫 pi05 而改变 PADP 的 horizon/action 语义。
+7. 所有迁移都以原始 PADP baseline 成功率为最终对照。
+

@@ -1,8 +1,8 @@
 # UR5 Example
 
-Below we provide an outline of how to implement the key components mentioned in the "Finetune on your data" section of the [README](../README.md) for finetuning on UR5 datasets.
+下面给出一个实现大纲，说明如何为 UR5 数据集实现根目录 [README](../README.md) 中 “Finetune on your data” 部分提到的关键组件。
 
-First, we will define the `UR5Inputs` and `UR5Outputs` classes, which map the UR5 environment to the model and vice versa. Check the corresponding files in `src/openpi/policies/libero_policy.py` for comments explaining each line.
+首先，我们定义 `UR5Inputs` 和 `UR5Outputs` 类，用于在 UR5 环境和模型之间进行输入输出映射。你可以查看 `src/openpi/policies/libero_policy.py` 中的对应文件，里面有逐行注释说明。
 
 ```python
 
@@ -57,7 +57,7 @@ class UR5Outputs(transforms.DataTransformFn):
 
 ```
 
-Next, we will define the `UR5DataConfig` class, which defines how to process raw UR5 data from LeRobot dataset for training. For a full example, see the `LeRobotLiberoDataConfig` config in the [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py).
+接下来定义 `UR5DataConfig` 类，说明如何处理来自 LeRobot dataset 的原始 UR5 数据以用于训练。完整示例可以参考 [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py) 中的 `LeRobotLiberoDataConfig`。
 
 ```python
 
@@ -109,7 +109,7 @@ class LeRobotUR5DataConfig(DataConfigFactory):
 
 ```
 
-Finally, we define the TrainConfig for our UR5 dataset. Here, we define a config for fine-tuning pi0 on our UR5 dataset. See the [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py) for more examples, e.g. for pi0-FAST or for LoRA fine-tuning.
+最后，为 UR5 数据集定义 `TrainConfig`。这里给出了一个在 UR5 数据集上微调 pi0 的配置示例。更多示例可以参考 [training config file](https://github.com/physical-intelligence/openpi/blob/main/src/openpi/training/config.py)，例如 pi0-FAST 或 LoRA finetuning。
 
 ```python
 TrainConfig(
@@ -135,8 +135,3 @@ TrainConfig(
     num_train_steps=30_000,
 )
 ```
-
-
-
-
-

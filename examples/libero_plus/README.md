@@ -1,30 +1,30 @@
-# LIBERO-Plus Evaluation
+# LIBERO-Plus 评估
 
-[LIBERO-Plus](https://arxiv.org/abs/2510.13626) is a robustness-oriented benchmark built on [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO). It introduces **7 perturbation dimensions** to evaluate generalization beyond in-distribution evaluation:
+[LIBERO-Plus](https://arxiv.org/abs/2510.13626) 是基于 [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) 构建的鲁棒性 benchmark。它引入了 **7 个扰动维度**，用于评估模型在分布内评估之外的泛化能力：
 
-| Dimension | Description |
+| 维度 | 说明 |
 |---|---|
-| Objects Layout | Confounding objects and target object displacement |
-| Camera Viewpoints | Position, orientation, and field-of-view changes |
-| Robot Initial States | Manipulator initial pose variations |
-| Language Instructions | LLM-based instruction rewriting |
-| Light Conditions | Intensity, direction, color, and shadow variations |
-| Background Textures | Scene and surface appearance changes |
-| Sensor Noise | Photometric distortions and image degradation |
+| Objects Layout | 干扰物体和目标物体位置变化 |
+| Camera Viewpoints | 相机位置、朝向和视场变化 |
+| Robot Initial States | 机械臂初始位姿变化 |
+| Language Instructions | 基于 LLM 的指令改写 |
+| Light Conditions | 光照强度、方向、颜色和阴影变化 |
+| Background Textures | 场景和表面外观变化 |
+| Sensor Noise | 光度扰动和图像退化 |
 
-GuidedVLA achieves **75.4% average success rate** on LIBERO-Plus, vs. 68.2% for the π₀ baseline.
+GuidedVLA 在 LIBERO-Plus 上达到 **75.4% 平均成功率**，相比之下，蟺鈧€ baseline 为 68.2%。
 
-## Requirements
+## 依赖要求
 
-This example requires the LIBERO-Plus submodule. Make sure it is initialized:
+该示例需要 LIBERO-Plus submodule。请确认它已经初始化：
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## Setup (without Docker)
+## 设置（不使用 Docker）
 
-Create a Python 3.8 environment for the LIBERO-Plus simulator:
+为 LIBERO-Plus 模拟器创建 Python 3.8 环境：
 
 ```bash
 # System dependencies
@@ -45,11 +45,11 @@ uv pip install -r third_party/LIBERO-plus/extra_requirements.txt
 export PYTHONPATH=$PYTHONPATH:$(pwd)/third_party/LIBERO-plus
 ```
 
-## Running Evaluation
+## 运行评估
 
-### Step 1: Launch the policy server
+### 步骤 1：启动 policy server
 
-In one terminal, launch the policy server pointing to your trained checkpoint:
+在一个终端中启动 policy server，并指向你训练好的 checkpoint：
 
 ```bash
 uv run --no-sync scripts/serve_policy.py \
@@ -60,9 +60,9 @@ uv run --no-sync scripts/serve_policy.py \
     --policy.dir checkpoints/pi0_libero_object_depth_skill/<exp_name>/<step>
 ```
 
-### Step 2: Run a single perturbation category
+### 步骤 2：运行单个扰动类别
 
-In a second terminal:
+在第二个终端中运行：
 
 ```bash
 source examples/libero_plus/.venv/bin/activate
@@ -78,16 +78,16 @@ python examples/libero_plus/main.py \
     --results-json-path data/libero_plus/libero_object.json
 ```
 
-Available `--task-suite-name` values: `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, `all`
+可用的 `--task-suite-name` 取值：`libero_spatial`、`libero_object`、`libero_goal`、`libero_10`、`all`
 
-Available `--category` values: `"Objects Layout"`, `"Camera Viewpoints"`, `"Robot Initial States"`, `"Language Instructions"`, `"Light Conditions"`, `"Background Textures"`, `"Sensor Noise"`
+可用的 `--category` 取值：`"Objects Layout"`、`"Camera Viewpoints"`、`"Robot Initial States"`、`"Language Instructions"`、`"Light Conditions"`、`"Background Textures"`、`"Sensor Noise"`
 
-Useful `main.py` arguments:
-- `--task-ids`: e.g. `0`, `0,3,7`, or `10-19`
-- `--replan-steps`: action chunk size requested from the server
-- `--results-json-path`: rolling JSON summary; when `--category` is set, the category suffix is appended automatically
+常用 `main.py` 参数：
+- `--task-ids`：例如 `0`、`0,3,7` 或 `10-19`
+- `--replan-steps`：从服务器请求的 action chunk 大小
+- `--results-json-path`：滚动写入的 JSON 汇总；设置 `--category` 时会自动追加类别后缀
 
-### Step 3: Run all task suites and perturbations at once
+### 步骤 3：一次性运行所有 task suite 和扰动
 
 ```bash
 uv run examples/libero_plus/eval_libero_plus.py \
@@ -98,12 +98,12 @@ uv run examples/libero_plus/eval_libero_plus.py \
     --libero-plus-path third_party/LIBERO-plus
 ```
 
-Useful `eval_libero_plus.py` arguments:
-- `--task-suites`: comma-separated suites, default is `libero_spatial,libero_object,libero_goal,libero_10`
-- `--categories`: comma-separated perturbation categories
-- `--task-ids`: restrict to a subset of tasks
-- `--num-trials-per-task`: number of rollouts per task
+常用 `eval_libero_plus.py` 参数：
+- `--task-suites`：用逗号分隔的 suite 列表，默认是 `libero_spatial,libero_object,libero_goal,libero_10`
+- `--categories`：用逗号分隔的扰动类别
+- `--task-ids`：限制只评估部分任务
+- `--num-trials-per-task`：每个任务的 rollout 次数
 
-Outputs are written under:
-- `data/libero_plus/` for JSON results and rollout videos
-- `logs/libero_plus/` for per-worker logs
+输出会写入：
+- `data/libero_plus/`：JSON 结果和 rollout 视频
+- `logs/libero_plus/`：每个 worker 的日志
