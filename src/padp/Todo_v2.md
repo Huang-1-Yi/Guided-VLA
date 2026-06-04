@@ -2045,3 +2045,114 @@ PADP 不使用语言。
 它能验证 PADP 是否能在 GuidedVLA 的外部接口下运行。
 等 VA baseline 能跑，再讨论语言条件或 robomimic 格式转换。
 ```
+
+## 2026-06-05：对齐 pi05 的诊断与训练测试口径
+
+当前决定：学习 pi05 的数据和训练外部口径，先诊断，再测试训练。
+
+对齐规则：
+
+```text
+pi05_libero batch_size = 256
+pi05_libero num_train_steps = 30000
+本项目本轮指定 num_workers = 32
+PADP train_libero.py 当前一批数据对应一步训练，所以新增 `--num-batches` 作为 `--max-train-steps` 的别名。
+openpi 的 compute_norm_stats.py 不直接暴露 `--num-batches`，而是按 `len(dataset) // batch_size` 自动计算。
+ybwowen/libero 约 273465 frames；batch_size=256 时，全量统计约为 1068 batches。
+```
+
+已完成调整：
+
+```text
+src/padp/config/libero_va_train.yaml
+  - dataloader.batch_size: 256
+  - dataloader.num_workers: 32
+  - training.device: cuda:1
+
+src/padp/training/diagnose_libero_semantics.py
+  - 默认 batch_size: 256
+  - 默认 num_workers: 32
+
+src/padp/training/train_libero.py
+  - 新增 `--num-batches`
+  - 若同时传入 `--num-batches` 和 `--max-train-steps` 且不一致，则直接报错，避免语义混乱。
+```
+
+服务器测试顺序：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+test -f "$OPENPI_PALIGEMMA_TOKENIZER_PATH"
+uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
+```
+
+1. 先诊断训练 loader 的 state/action 语义：
+
+```bash
+uv run python -m padp.training.diagnose_libero_semantics \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 4 \
+  --print-rows 3
+```
+
+这里 `--num-batches 4` 是抽样诊断，不是 pi05 的训练步数。诊断目标是确认：
+
+```text
+state[:8] 的数值范围是否正常。
+state[3:7] 是否只是沿用 OpenPI state slice，还是确实应解释为 quat。
+actions[:,:,:7] 的范围是否和 LIBERO env.step(action) 侧一致。
+PADP adapter 后的 obs/action shape 是否仍为 state=8、action=7、horizon=40。
+```
+
+2. 再测试 pi05 batch_size 是否能在 PADP 单卡上 backward：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_backward_only \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1 \
+  --checkpoint-every 0 \
+  --device cuda:1 \
+  --backward-only
+```
+
+3. backward-only 成功后，再做短训练：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_100step \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 100 \
+  --checkpoint-every 50 \
+  --device cuda:1
+```
+
+4. 如果短训练成功，再考虑长训练：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_10kstep \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 10000 \
+  --checkpoint-every 2500 \
+  --device cuda:1
+```
+
+如果 batch_size=256 在 PADP 上 OOM，不要把它视为数据或接口错误。pi05 的 batch_size=256 是 VLA 训练配置口径，PADP 当前是单卡 PyTorch diffusion policy，显存曲线不同。下一步应增加 gradient accumulation，用较小 micro batch 近似 effective batch size=256。

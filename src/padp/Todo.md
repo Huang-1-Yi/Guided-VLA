@@ -700,3 +700,81 @@ C:\QClaw\GuidedVLA\src\padp\Todo_v2.md
 ```
 
 后续以 `Todo_v2.md` 为主继续推进。
+
+## 2026-06-05：按 pi05 口径先诊断再训练
+
+本阶段目标不是直接追求成功率，而是把 PADP-VA 的数据读取、语义诊断和训练测试按 pi05 风格统一起来。
+
+已完成的代码调整：
+
+```text
+1. `src/padp/config/libero_va_train.yaml` 默认改为 batch_size=256、num_workers=32、device=cuda:1。
+2. `src/padp/training/diagnose_libero_semantics.py` 默认改为 batch_size=256、num_workers=32。
+3. `src/padp/training/train_libero.py` 新增 `--num-batches`，语义等同于 `--max-train-steps`，因为当前 PADP 训练循环是一批数据对应一步训练。
+```
+
+和 pi05 对齐时需要注意：
+
+```text
+pi05_libero 的 batch_size 是 256。
+pi05_libero 的 num_train_steps 是 30000。
+openpi 的 compute_norm_stats.py 没有手动传入的 `--num-batches`；它会用 `len(dataset) // batch_size` 自动计算。
+ybwowen/libero 当前约 273465 frames，若 batch_size=256，全量统计约为 1068 batches。
+PADP 当前是单卡 PyTorch 训练，batch_size=256 可能显存压力很大，所以必须先做 backward-only 诊断。
+```
+
+服务器上下一步按顺序执行：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+test -f "$OPENPI_PALIGEMMA_TOKENIZER_PATH"
+uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
+```
+
+第一步，诊断训练数据语义：
+
+```bash
+uv run python -m padp.training.diagnose_libero_semantics \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 4 \
+  --print-rows 3
+```
+
+第二步，按 pi05 batch_size 做一次 backward-only 显存测试，不保存 checkpoint：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_backward_only \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1 \
+  --checkpoint-every 0 \
+  --device cuda:1 \
+  --backward-only
+```
+
+第三步，如果 backward-only 成功，再做短训练测试：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_100step \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 100 \
+  --checkpoint-every 50 \
+  --device cuda:1
+```
+
+如果第二步或第三步 OOM，说明 pi05 的 batch_size=256 不适合当前 PADP 单卡显存。此时不要改 state/action 语义，下一步应给 `train_libero.py` 增加 gradient accumulation，用较小 micro batch 模拟 effective batch size=256。

@@ -83,8 +83,8 @@ policy:
   pred_type: sample
 
 dataloader:
-  batch_size: 8
-  num_workers: 0
+  batch_size: 256
+  num_workers: 32
   shuffle: true
   pin_memory: true
   persistent_workers: false
@@ -97,7 +97,7 @@ optimizer:
   weight_decay: 1.0e-6
 
 training:
-  device: cuda:0
+  device: cuda:1
   seed: 42
   max_train_steps: 1000
   gradient_accumulate_every: 1

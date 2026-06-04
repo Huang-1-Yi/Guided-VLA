@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--normalizer-path", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--max-train-steps", type=int, default=None)
+    parser.add_argument(
+        "--num-batches",
+        type=int,
+        default=None,
+        help="Alias for --max-train-steps; PADP train_libero consumes one batch per training step.",
+    )
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--device", default=None)
@@ -197,6 +203,10 @@ def apply_overrides(cfg: Any, args: argparse.Namespace) -> None:
         cfg.training.output_dir = str(args.output_dir)
     if args.max_train_steps is not None:
         cfg.training.max_train_steps = args.max_train_steps
+    if args.num_batches is not None:
+        if args.max_train_steps is not None and args.max_train_steps != args.num_batches:
+            raise ValueError("--num-batches and --max-train-steps disagree; pass only one value or make them equal.")
+        cfg.training.max_train_steps = args.num_batches
     if args.batch_size is not None:
         cfg.dataloader.batch_size = args.batch_size
     if args.num_workers is not None:
