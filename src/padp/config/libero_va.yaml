@@ -1,0 +1,173 @@
+# PADP-VA on GuidedVLA LIBERO data.
+#
+# This config is intentionally independent from the original robomimic task yaml:
+# GuidedVLA's LIBERO loader provides 8-D state and 7-D delta actions, while the
+# original PADP robomimic config used 10-D actions.
+
+name: padp_libero_va_${policy.noise_schedule_mode}_obs${n_obs_steps}_a${n_action_steps}_h${horizon}_beta${window_exp_gamma}
+_target_: padp.workspace.robomimic.train_padp_workspace_v3.TrainDiffusionUnetHybridWorkspace
+
+shape_meta:
+  obs:
+    agentview_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eef_pos:
+      shape: [3]
+    robot0_eef_quat:
+      shape: [4]
+    robot0_gripper_qpos:
+      shape: [1]
+  action:
+    shape: [7]
+
+exp_name: default
+task_name: libero_va
+
+# PADP temporal settings.
+n_demo: 200
+n_obs_steps: 1
+n_action_steps: 1
+horizon: 40
+window_exp_gamma: 0.2
+n_latency_steps: 0
+dataset_obs_steps: ${n_obs_steps}
+past_action_visible: false
+obs_as_global_cond: true
+
+# GuidedVLA / openpi data source used by the PADP adapter.
+openpi_config: pi0_libero_object
+repo_id: ybwowen/libero
+local_root_dir: /home/hy/.cache/huggingface/lerobot/ybwowen/libero
+
+# PADP will use its own adapter and normalizer, not openpi's padded 32-D model tensors.
+dataset: padp.data.openpi_libero_loader.OpenPiLiberoPadpDataset
+
+policy:
+  _target_: padp.policy.robomimic.diffusion_unet_hybrid_padp.SlidingWindowDiffusionPolicy
+  shape_meta: ${shape_meta}
+
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    num_train_timesteps: ${horizon}
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    clip_sample: true
+    set_alpha_to_one: true
+    steps_offset: 0
+    prediction_type: sample
+
+  obs_encoder:
+    _target_: padp.model.vision.dinov3_timm_obs_encoder.TimmObsEncoder
+    shape_meta: ${shape_meta}
+    model_name: vit_small_patch16_dinov3
+    pretrained: true
+    frozen: false
+    global_pool: ''
+    transforms:
+      - _target_: torchvision.transforms.Resize
+        size: [224, 224]
+        antialias: true
+    use_group_norm: true
+    share_rgb_model: true
+    imagenet_norm: true
+    feature_aggregation: cls_token
+
+  noise_schedule_mode: positionwise
+  noise_chunk_size: 1
+  window_loss_weights: exponential
+  window_exp_gamma: ${window_exp_gamma}
+
+  horizon: ${horizon}
+  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
+  n_obs_steps: ${n_obs_steps}
+  num_inference_steps: ${horizon}
+  obs_as_global_cond: ${obs_as_global_cond}
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  cond_predict_scale: true
+  pred_type: sample
+
+ema:
+  _target_: padp.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+dataloader:
+  batch_size: 8
+  num_workers: 0
+  shuffle: false
+  pin_memory: true
+  persistent_workers: false
+
+val_dataloader:
+  batch_size: 8
+  num_workers: 0
+  shuffle: false
+  pin_memory: true
+  persistent_workers: false
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+training:
+  device: cuda:0
+  seed: 42
+  debug: false
+  resume: false
+  pretrained_model_path: null
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 1
+  gradient_accumulate_every: 1
+  use_ema: true
+  rollout_every: 0
+  checkpoint_every: 1000
+  val_every: 1
+  sample_every: 5
+  max_train_steps: 100
+  max_val_steps: null
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: padp_libero_va
+  resume: false
+  mode: offline
+  name: ${name}_${exp_name}
+  tags: ["${name}", "${task_name}", "${exp_name}", "${policy.noise_schedule_mode}"]
+  id: null
+  group: null
+
+checkpoint:
+  topk:
+    monitor_key: val_loss
+    mode: min
+    k: 5
+    format_str: epoch{epoch:03d}_loss{val_loss:.4f}.ckpt
+  save_last_ckpt: true
+  save_last_snapshot: false
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}

@@ -1,0 +1,179 @@
+defaults:
+  - _self_
+  - task: libero
+  # 任务配置通过 defaults 外部引入，便于多份 PADP 配置共享同一 task 定义。
+
+# 【修改点】动态生成 name，根据 noise_schedule_mode 自动切换
+name: padp_${policy.noise_schedule_mode}_${n_obs_steps}_${n_action_steps}_${horizon}_${window_exp_gamma}
+_target_: padp.workspace.robomimic.train_padp_workspace_v3.TrainDiffusionUnetHybridWorkspace
+
+shape_meta: ${task.shape_meta}
+exp_name: "default"
+
+# =========================
+# Ablation knobs (消融实验控制台)
+# =========================
+# demo ablation
+n_demo: 200
+# observation history ablation
+n_obs_steps: 1
+# action horizon / rollout window ablation
+n_action_steps: 1
+# dataset window horizon ablation
+horizon: 40
+# window loss decay ablation
+window_exp_gamma: 0.2
+
+task_name: stack_d1
+n_latency_steps: 0
+dataset_obs_steps: ${n_obs_steps}
+past_action_visible: False
+obs_as_global_cond: True
+dataset: padp.dataset.robomimic.replay_image_dataset_padp.RobomimicReplayImageDataset
+dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
+
+policy:
+  _target_: padp.policy.robomimic.diffusion_unet_hybrid_padp.SlidingWindowDiffusionPolicy
+  shape_meta: ${shape_meta}
+
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    num_train_timesteps: ${horizon}
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    clip_sample: True
+    set_alpha_to_one: True
+    steps_offset: 0
+    prediction_type: sample
+
+  # 插入式编码器配置 - 可随时替换为其他编码器
+  # obs_encoder:
+  #   _target_: padp.model.vision.robomimic_obs_encoder.RobomimicObsEncoder
+  #   shape_meta: ${shape_meta}
+  #   crop_shape: [76, 76]
+  #   obs_encoder_group_norm: True
+  #   eval_fixed_crop: True
+
+  obs_encoder:
+    _target_: padp.model.task_padp.dinov3_timm_obs_encoder.TimmObsEncoder
+    shape_meta: ${shape_meta}
+    model_name: "vit_small_patch16_dinov3"
+    pretrained: True
+    frozen: False
+    global_pool: ''
+    transforms:
+      - _target_: torchvision.transforms.Resize
+        size: [224, 224]
+        antialias: True
+    use_group_norm: True
+    share_rgb_model: True
+    imagenet_norm: True
+    feature_aggregation: "cls_token"
+
+  # ==========================================
+  # 噪声模式 (在命令行通过 policy.noise_schedule_mode=xxx 覆盖)
+  # - positionwise: (黄金标准) 静态位置感知，O(1)极速广播
+  # - constant: 整条轨迹共享同一个噪声层级 (消融对照组)
+  # - linear: 噪声随位置严格线性递增 (消融对照组)
+  # - random: 每个位置独立随机采样噪声强度 (消融对照组)
+  # - chunkwise: 分块噪声级分配 (由 noise_chunk_size 控制块大小)
+  # ==========================================
+  noise_schedule_mode: positionwise
+  noise_chunk_size: 1
+
+  window_loss_weights: exponential
+  window_exp_gamma: ${window_exp_gamma}
+
+  horizon: ${horizon}
+  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
+  n_obs_steps: ${n_obs_steps}
+  num_inference_steps: ${horizon}
+  obs_as_global_cond: ${obs_as_global_cond}
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  cond_predict_scale: True
+  pred_type: 'sample'  # 'epsilon' or 'sample'
+
+ema:
+  _target_: padp.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+dataloader:
+  batch_size: 64
+  num_workers: 32
+  shuffle: False # 因为训练要求的缘故，通过代码打乱episode，不打乱窗口
+  pin_memory: True
+  persistent_workers: True  # 持久模式：50GB数据​​常驻内存
+
+val_dataloader:
+  batch_size: 64
+  num_workers: 32
+  shuffle: False
+  pin_memory: True
+  persistent_workers: True
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6 
+
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  resume: True
+  # pretrained_model_path: null  # null=从0训练, 非null=加载预训练模型继续训练
+  pretrained_model_path: /home/hy/Desktop/PADP_v3/PADP_v3/data/outputs/checkpoints/source_task_best.ckpt
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+
+  num_epochs: ${eval:'50000 / ${n_demo} + 1'}
+  gradient_accumulate_every: 1
+  use_ema: True
+  rollout_every: ${eval:'1000 / ${n_demo}'}
+  checkpoint_every: ${eval:'1000 / ${n_demo}'}
+  val_every: 1
+  sample_every: 5
+  max_train_steps: null
+  max_val_steps: null
+  tqdm_interval_sec: 1.0
+
+logging:
+  project: diffusion_policy_${task_name}
+  resume: True
+  mode: offline
+  # 建议将日志名称也动态关联，方便在 WandB 查看
+  name: padp_c_${policy.noise_schedule_mode}_demo${n_demo}_h${horizon}_obs${n_obs_steps}_a${n_action_steps}_beta${window_exp_gamma}
+  tags: ["${name}", "${task_name}", "${exp_name}", "${policy.noise_schedule_mode}"]
+  id: null
+  group: null
+
+checkpoint:
+  topk:
+    monitor_key: test_mean_score
+    mode: max
+    k: 5
+    format_str: 'epoch{epoch:03d}_score{test_mean_score:.4f}.ckpt'
+  save_last_ckpt: True
+  save_last_snapshot: False
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}

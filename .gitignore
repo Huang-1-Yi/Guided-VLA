@@ -4,6 +4,8 @@ checkpoints/
 checkpoints
 wandb/
 data/
+!src/padp/data/
+!src/padp/data/*.py
 data_libero/
 results/
 out/

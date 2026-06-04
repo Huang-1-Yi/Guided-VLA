@@ -1,0 +1,1540 @@
+# PADP 迁移技术路线 v2
+
+## 2026-06-04 当前执行口径
+
+当前路线是 PADP-VA baseline，不是把 PADP 直接改成 pi05/VLA。
+
+```text
+数据源：ybwowen/libero，本地 root 为 /home/hy/.cache/huggingface/lerobot/ybwowen/libero
+读取链路：优先复用 openpi data loader，确认数据字段与 GuidedVLA 一致
+PADP 输入：裁掉 openpi padding，只保留 LIBERO 真实 state/action
+图像尺寸：当前 DINOv3 encoder 使用 224x224
+动作维度：7
+状态维度：8
+时间长度：PADP horizon=40
+```
+
+马上要做的不是再跑 `compute_norm_stats.py`，而是实现 PADP adapter 和 smoke loss：
+
+```text
+src/padp/data/libero_batch_adapter.py
+src/padp/data/openpi_libero_loader.py
+src/padp/training/smoke_libero_loss.py
+```
+
+`scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 后续需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
+
+## 目标重新定义
+
+目标不是把 PADP 直接改成 pi05。
+
+更准确的目标是：
+
+```text
+在 GuidedVLA 的外部接口下运行 PADP。
+训练和推理命令可以不同。
+但评估接口尽量和 pi05 一致：
+  service -> websocket -> client -> actions
+```
+
+## 服务器下一步测试路线：先测 PADP-VA 能不能闭环
+
+### README 对复现的实际假设
+
+`C:\QClaw\GuidedVLA\README.md` 中的 GuidedVLA LIBERO 复现路线不是优先使用 `physical-intelligence/libero`。
+
+README 明确说明：
+
+```text
+GuidedVLA LIBERO 训练数据集：ybwowen/libero
+GuidedVLA LIBERO checkpoint：ybwowen/pi0-libero-object-depth-skill
+默认复现 config：pi0_libero_object_depth_skill
+```
+
+对应代码位置：
+
+```text
+src/openpi/training/config.py
+```
+
+其中：
+
+```text
+pi0_libero_object_depth_skill -> repo_id="ybwowen/libero"
+pi0_libero_object             -> repo_id="ybwowen/libero"
+pi0_libero_depth              -> repo_id="ybwowen/libero"
+pi0_libero_skill              -> repo_id="ybwowen/libero"
+```
+
+而 `pi05_libero` 当前仍是模板/自定义数据 config：
+
+```text
+pi05_libero -> repo_id="your-hf-username/your-dataset"
+```
+
+因此，后续 PADP-VA smoke test 应先复用 README 的数据源：
+
+```text
+ybwowen/libero
+```
+
+不要再用已经确认不兼容 GuidedVLA 当前 `lerobot v3.0` 的：
+
+```text
+physical-intelligence/libero
+```
+
+当前服务器已经找到本地 tokenizer：
+
+```bash
+/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+```
+
+后续每次测试先执行：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+```
+
+先不要手动设置 `LEROBOT_ROOT` 到 `physical-intelligence/libero`。让 `lerobot` 按 `repo_id="ybwowen/libero"` 自动下载到默认 Hugging Face cache。若后续要使用本地路径，再使用：
+
+```bash
+export LEROBOT_ROOT=/home/hy/.cache/huggingface/lerobot/ybwowen/libero
+```
+
+注意：`LEROBOT_ROOT` 指向数据集根目录，不是 `meta` 目录。
+
+### 第 1 步：确认 openpi 能读 LIBERO batch
+
+先不要训练 PADP，先确认 README 推荐的 `ybwowen/libero` 能被 GuidedVLA 当前 loader 读出来。
+
+```bash
+uv run python scripts/test_data_loader.py \
+  --config-name pi0_libero_object_depth_skill \
+  --framework pytorch \
+  --split train \
+  --num-batches 1 \
+  --num-workers 0
+```
+
+如果 full GuidedVLA config 因为 object/skill/depth 辅助项导致排查不方便，可以先用更轻的 `pi0_libero_object` 测试同一个 `ybwowen/libero` 数据源：
+
+```bash
+uv run python scripts/test_data_loader.py \
+  --config-name pi0_libero_object \
+  --framework pytorch \
+  --split train \
+  --num-batches 1 \
+  --num-workers 0
+```
+
+如果仍然报 tokenizer 下载错误，说明 `OPENPI_PALIGEMMA_TOKENIZER_PATH` 没有生效；先运行：
+
+```bash
+uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
+```
+
+### 第 2 步：新增 PADP LIBERO batch adapter
+
+新增文件：
+
+```text
+src/padp/data/__init__.py
+src/padp/data/openpi_libero_loader.py
+src/padp/data/libero_batch_adapter.py
+```
+
+第一版只做 VA，不使用 prompt。目标是把 openpi loader 返回的 batch 转成 PADP 的 batch：
+
+```python
+{
+    "obs": {
+        "agentview_image": image,
+        "robot0_eye_in_hand_image": wrist_image,
+        "robot0_eef_pos": state[..., 0:3],
+        "robot0_eef_quat": state[..., 3:7],
+        "robot0_gripper_qpos": state[..., 7:8],
+    },
+    "action": actions[..., :7],
+}
+```
+
+如果 LIBERO state 维度不是上述切法，以实际 batch 打印结果为准。第一版重点是跑通，不追求完美语义。
+
+### 第 3 步：新增最小 loss smoke test
+
+新增文件：
+
+```text
+src/padp/training/smoke_libero_loss.py
+```
+
+目标：
+
+```text
+openpi LIBERO batch
+-> PADP adapter
+-> SlidingWindowDiffusionPolicy
+-> compute_loss
+-> 打印 loss
+```
+
+建议命令：
+
+```bash
+uv run python -m padp.training.smoke_libero_loss \
+  --openpi-config pi0_libero_object \
+  --repo-id ybwowen/libero \
+  --batch-size 2 \
+  --device cuda:0
+```
+
+这一步成功的标志是能打印类似：
+
+```text
+padp batch obs keys: ...
+action shape: ...
+loss shape: ...
+loss mean: ...
+```
+
+这一步比直接训练重要。它能验证图像 shape、state/action 切片、PADP normalizer、obs_encoder 和 diffusion loss 是否能连起来。
+
+### 第 4 步：新增 PADP LIBERO smoke train
+
+新增文件：
+
+```text
+src/padp/training/train_libero.py
+src/padp/training/checkpoint.py
+```
+
+第一版只训练很少步数：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --openpi-config pi0_libero_object \
+  --repo-id ybwowen/libero \
+  --exp-name padp_libero_smoke \
+  --batch-size 8 \
+  --max-steps 100 \
+  --device cuda:0
+```
+
+成功标志：
+
+```text
+loss 能下降或至少稳定反向传播
+checkpoint 能保存
+训练中没有 shape / dtype / normalizer 报错
+```
+
+### 第 5 步：新增 PADP websocket service
+
+新增文件：
+
+```text
+src/padp/serving/policy_factory.py
+src/padp/serving/serve_libero.py
+```
+
+目标输出必须和 GuidedVLA LIBERO client 对齐：
+
+```python
+{"actions": action_chunk}
+```
+
+建议命令：
+
+```bash
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_smoke/latest.pt \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --device cuda:0
+```
+
+### 第 6 步：用 LIBERO client 评估成功率
+
+service 跑起来后，再开另一个终端：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+examples/libero/.venv/bin/python examples/libero/main.py \
+  --args.task-suite-name libero_spatial \
+  --args.num-trials-per-task 1 \
+  --args.save-name padp_libero_va_smoke \
+  --args.host 127.0.0.1 \
+  --args.port 8000
+```
+
+先只跑 `1 trial`。能完整 rollout 后，再逐步增加：
+
+```bash
+--args.num-trials-per-task 5
+--args.num-trials-per-task 10
+```
+
+### 当前判断标准
+
+第一阶段不要用 pi05 成功率要求 PADP。PADP-VA baseline 的目标是回答：
+
+```text
+在同一个 LIBERO 数据和同一个 websocket 评估链路下，
+纯视觉/状态/动作的 PADP 能不能训练、能不能闭环推理、能达到多少成功率。
+```
+
+如果这个 baseline 成功率明显低，下一步再判断是：
+
+```text
+1. 数据适配问题：图像 key、state 切片、action 语义、归一化不对；
+2. 模型能力问题：PADP 没有语言条件，无法区分多任务 prompt；
+3. 评估接口问题：action chunk、控制频率、reset、normalizer 或 action 后处理不一致。
+```
+
+只有排除第 1 和第 3 类问题后，才值得进入 PADP-VLA，也就是给 PADP 加 prompt encoder / language condition。
+
+### 补充修正：如果需要内联覆盖 repo/local root
+
+`scripts/test_data_loader.py` 不能覆盖 `local_root_dir`。如果需要显式指定 repo 或本地 root，使用下面的内联脚本。
+
+默认优先测试 README 数据源 `ybwowen/libero`，并让 `lerobot` 自动下载：
+
+```bash
+uv run python - <<'PY'
+import dataclasses
+import torch
+
+from openpi.training import config as _config
+from openpi.training import data_loader as _data_loader
+
+cfg = _config.get_config("pi0_libero_object")
+cfg = dataclasses.replace(
+    cfg,
+    batch_size=2,
+    num_workers=0,
+    data=dataclasses.replace(
+        cfg.data,
+        repo_id="ybwowen/libero",
+    ),
+)
+
+loader = _data_loader.create_data_loader(
+    cfg,
+    framework="pytorch",
+    split="train",
+    shuffle=False,
+    num_batches=1,
+    skip_norm_stats=True,
+)
+
+obs, actions, object_targets = next(iter(loader))
+print("obs type:", type(obs))
+print("image keys:", list(obs.images.keys()))
+for key, value in obs.images.items():
+    print("image", key, tuple(value.shape), value.dtype, float(value.min()), float(value.max()))
+print("state:", tuple(obs.state.shape), obs.state.dtype, float(obs.state.min()), float(obs.state.max()))
+print("actions:", tuple(actions.shape), actions.dtype, float(actions.min()), float(actions.max()))
+print("object_targets:", None if object_targets is None else object_targets.keys())
+PY
+```
+
+这条命令能跑通后，再去写 PADP adapter。否则先不要进入 PADP 训练。
+
+如果你已经下载到本地，也可以显式传本地 root。注意 root 仍然是数据集根目录，不是 `meta`：
+
+```python
+base_config=dataclasses.replace(
+    cfg.data.base_config,
+    local_root_dir="/home/hy/.cache/huggingface/lerobot/ybwowen/libero",
+)
+```
+
+### 当前新报错：LeRobot 数据集版本不兼容
+
+如果 LIBERO batch 读取报：
+
+```text
+BackwardCompatibilityError
+NotImplementedError: Contact the maintainer on Discord
+```
+
+说明已经越过 tokenizer，当前卡在 LeRobot 数据集版本兼容性。
+
+目前已知：
+
+```text
+GuidedVLA 使用 lerobot rev d9e74a9d374a8f26582ad326c699740a227b483c
+FASTER_hy 使用 lerobot rev 0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+```
+
+而你之前在 `FASTER_hy` 中跑通过 LIBERO，所以很可能是：
+
+```text
+本地缓存的 physical-intelligence/libero 数据格式
+与 GuidedVLA 当前锁定的 lerobot 代码版本不兼容。
+```
+
+先在服务器上定位版本：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export LEROBOT_ROOT=/home/hy/.cache/huggingface/lerobot/physical-intelligence/libero
+
+find "$LEROBOT_ROOT/meta" -maxdepth 2 -type f | sort | head -50
+cat "$LEROBOT_ROOT/meta/info.json" | python -m json.tool | head -80
+
+uv run python - <<'PY'
+import lerobot
+import lerobot.datasets.lerobot_dataset as ld
+import lerobot.datasets.utils as utils
+
+print("lerobot file:", lerobot.__file__)
+print("lerobot_dataset file:", ld.__file__)
+print("CODEBASE_VERSION in lerobot_dataset:", getattr(ld, "CODEBASE_VERSION", None))
+print("CODEBASE_VERSION in utils:", getattr(utils, "CODEBASE_VERSION", None))
+PY
+```
+
+服务器输出已经确认：
+
+```text
+LIBERO 数据集 meta/info.json:
+  codebase_version = v2.0
+
+GuidedVLA 当前 .venv 中的 lerobot:
+  CODEBASE_VERSION = v3.0
+```
+
+因此这不是路径问题，而是明确的版本不匹配：
+
+```text
+数据集是 LeRobot v2.0 格式。
+当前 GuidedVLA 的 lerobot 按 v3.0 代码读取。
+```
+
+### 当前决定：保持 GuidedVLA 的 lerobot v3.0
+
+现在决定不降级 `Guided-VLA/.venv`，而是使用 GuidedVLA 当前锁定的 `lerobot v3.0`。
+
+因此：
+
+```text
+不更新 FASTER_hy。
+不把 GuidedVLA 的 lerobot 降到 FASTER_hy 的旧版本。
+后续要更新/重建的是 LIBERO 数据集，让它兼容 GuidedVLA 当前 lerobot v3.0。
+```
+
+结合 README，当前更准确的选择是：
+
+```text
+优先使用 ybwowen/libero。
+它是 GuidedVLA 作者为本仓库复现发布的 LIBERO 训练数据集。
+physical-intelligence/libero 属于 openpi/pi0.5 原始示例数据源，不是 GuidedVLA README 的首选复现数据源。
+```
+
+### 重新下载测试结果
+
+你已经执行：
+
+```bash
+mv ~/.cache/huggingface/lerobot/physical-intelligence/libero \
+   ~/.cache/huggingface/lerobot/physical-intelligence/libero_v2_backup
+```
+
+然后用 GuidedVLA 当前 `lerobot v3.0` 重新打开远端数据：
+
+```bash
+uv run python - <<'PY'
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+repo_id = "physical-intelligence/libero"
+meta = LeRobotDatasetMetadata(repo_id)
+print("download/open ok")
+print("repo_id:", meta.repo_id)
+print("fps:", meta.fps)
+print("tasks:", len(meta.tasks))
+PY
+```
+
+仍然报：
+
+```text
+BackwardCompatibilityError
+NotImplementedError: Contact the maintainer on Discord
+```
+
+这说明：
+
+```text
+不是本地缓存旧导致的。
+physical-intelligence/libero 远端当前可用版本本身不兼容 GuidedVLA 的 lerobot v3.0。
+重新下载同一个 repo 不能解决。
+```
+
+但这不等于 GuidedVLA 的 README 复现路线不可用。README 的复现路线应测试：
+
+```text
+ybwowen/libero
+```
+
+而不是继续测试：
+
+```text
+physical-intelligence/libero
+```
+
+当前旧缓存已经被你移动到：
+
+```bash
+~/.cache/huggingface/lerobot/physical-intelligence/libero_v2_backup
+```
+
+如果后续还要在 `FASTER_hy` 中继续使用旧数据，可以恢复：
+
+```bash
+mv ~/.cache/huggingface/lerobot/physical-intelligence/libero_v2_backup \
+   ~/.cache/huggingface/lerobot/physical-intelligence/libero
+```
+
+但恢复后，GuidedVLA 仍然会因为 `v2.0 -> v3.0` 不兼容而报错。
+
+### 接下来的正确路线
+
+保持 GuidedVLA 当前环境不变，下一步先测试 README 推荐数据源：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+
+uv run python - <<'PY'
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+repo_id = "ybwowen/libero"
+meta = LeRobotDatasetMetadata(repo_id)
+print("download/open ok")
+print("repo_id:", meta.repo_id)
+print("fps:", meta.fps)
+print("tasks:", len(meta.tasks))
+print("root:", meta.root)
+PY
+```
+
+当前服务器已经报：
+
+```text
+RevisionNotFoundError: Your dataset must be tagged with a codebase version.
+```
+
+含义：
+
+```text
+LeRobot v3 默认会按 codebase version tag 选择 Hugging Face dataset revision。
+ybwowen/libero 当前没有对应 tag。
+这不等于 ybwowen/libero 的数据内容一定不兼容，只是默认 revision 解析失败。
+```
+
+下一步先绕开 LeRobot 的自动 revision 解析，用 Hugging Face Hub 直接检查 `main` 分支的 `meta/info.json`：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+uv run python - <<'PY'
+import json
+from huggingface_hub import HfApi, hf_hub_download
+
+repo_id = "ybwowen/libero"
+api = HfApi()
+refs = api.list_repo_refs(repo_id, repo_type="dataset")
+print("branches:", [b.name for b in refs.branches])
+print("tags:", [t.name for t in refs.tags])
+
+info_path = hf_hub_download(
+    repo_id=repo_id,
+    repo_type="dataset",
+    filename="meta/info.json",
+    revision="main",
+)
+print("info_path:", info_path)
+with open(info_path) as f:
+    info = json.load(f)
+print("codebase_version:", info.get("codebase_version"))
+print("features:", list(info.get("features", {}).keys()))
+PY
+```
+
+判断：
+
+```text
+如果 codebase_version 是 v3.0 或能被当前 GuidedVLA lerobot 接受：
+  手动 snapshot_download 到本地 root，再让 data loader 用 local_root_dir。
+
+如果 codebase_version 仍是 v2.0：
+  ybwowen/libero 也需要迁移/重转，不能直接用于 GuidedVLA 当前 lerobot v3.0。
+```
+
+当前服务器输出已经确认：
+
+```text
+branches: ['main']
+tags: []
+codebase_version: v3.0
+features:
+  image
+  wrist_image
+  state
+  joint_state
+  actions
+  observation.skill_id
+  observation.skill_text
+  agentview_attention_object_mask
+  wrist_attention_object_mask
+  timestamp
+  frame_index
+  episode_index
+  index
+  task_index
+```
+
+结论：
+
+```text
+ybwowen/libero 的 main 分支数据内容是 LeRobot v3.0。
+它只是没有 Hugging Face dataset tag，所以 LeRobotDatasetMetadata(repo_id) 默认自动解析 revision 会失败。
+当前正确做法是 snapshot_download(..., revision="main") 到本地 root，再显式 local_root_dir 读取。
+```
+
+当前已经开始正常下载。`local_dir_use_symlinks` warning 是 huggingface_hub 的弃用提示，不影响下载。
+
+手动下载到本地 root 的命令：
+
+```bash
+uv run python - <<'PY'
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="ybwowen/libero",
+    repo_type="dataset",
+    revision="main",
+    local_dir="/home/hy/.cache/huggingface/lerobot/ybwowen/libero",
+    local_dir_use_symlinks=False,
+)
+print("snapshot downloaded")
+PY
+```
+
+然后测试本地 root：
+
+```bash
+uv run python - <<'PY'
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+meta = LeRobotDatasetMetadata(
+    "ybwowen/libero",
+    root="/home/hy/.cache/huggingface/lerobot/ybwowen/libero",
+)
+print("local open ok")
+print("fps:", meta.fps)
+print("tasks:", len(meta.tasks))
+print("root:", meta.root)
+PY
+```
+
+如果本地 root 可以打开，再测试 openpi data loader。因为 `scripts/test_data_loader.py` 不能传 `local_root_dir`，优先用内联脚本：
+
+```bash
+uv run python - <<'PY'
+import dataclasses
+
+from openpi.training import config as _config
+from openpi.training import data_loader as _data_loader
+
+local_root = "/home/hy/.cache/huggingface/lerobot/ybwowen/libero"
+
+cfg = _config.get_config("pi0_libero_object")
+cfg = dataclasses.replace(
+    cfg,
+    batch_size=2,
+    num_workers=0,
+    data=dataclasses.replace(
+        cfg.data,
+        repo_id="ybwowen/libero",
+        base_config=dataclasses.replace(
+            cfg.data.base_config,
+            local_root_dir=local_root,
+        ),
+    ),
+)
+
+loader = _data_loader.create_data_loader(
+    cfg,
+    framework="pytorch",
+    split="train",
+    shuffle=False,
+    num_batches=1,
+    skip_norm_stats=True,
+)
+
+batch = next(iter(loader))
+if len(batch) == 3:
+    obs, actions, object_targets = batch
+else:
+    obs, actions = batch
+    object_targets = None
+
+print("obs type:", type(obs))
+print("image keys:", list(obs.images.keys()))
+for key, value in obs.images.items():
+    print("image", key, tuple(value.shape), value.dtype, float(value.min()), float(value.max()))
+print("state:", tuple(obs.state.shape), obs.state.dtype, float(obs.state.min()), float(obs.state.max()))
+print("actions:", tuple(actions.shape), actions.dtype, float(actions.min()), float(actions.max()))
+print("object_targets:", None if object_targets is None else object_targets.keys())
+print("LIBERO batch read ok")
+PY
+```
+
+当前服务器已经验证通过：
+
+```text
+LeRobotDatasetMetadata local open ok
+fps: 10
+tasks: 40
+root: /home/hy/.cache/huggingface/lerobot/ybwowen/libero
+
+openpi data loader read ok
+obs type: openpi.models.model.Observation
+image keys:
+  base_0_rgb
+  left_wrist_0_rgb
+  right_wrist_0_rgb
+base_0_rgb: (2,224,224,3), torch.uint8, range [0,255]
+left_wrist_0_rgb: (2,224,224,3), torch.uint8, range [0,255]
+right_wrist_0_rgb: zero padding
+state: (2,32), torch.float32
+actions: (2,50,32), torch.float32
+object_targets: object_maps, object_masks
+```
+
+结论：
+
+```text
+LIBERO 数据读取问题已经解决。
+现在正式进入 PADP adapter 阶段。
+```
+
+### PADP adapter 阶段：新增文件
+
+新增：
+
+```text
+src/padp/data/__init__.py
+src/padp/data/libero_batch_adapter.py
+src/padp/data/openpi_libero_loader.py
+src/padp/config/libero_va.yaml
+src/padp/training/smoke_libero_loss.py
+```
+
+已完成：
+
+```text
+src/padp/config/libero_va.yaml
+```
+
+该文件合并自：
+
+```text
+src/padp/config/libero.yaml
+src/padp/config/task/libero.yaml
+```
+
+并修正了：
+
+```text
+DINOv3 encoder target:
+  padp.model.vision.dinov3_timm_obs_encoder.TimmObsEncoder
+
+action shape:
+  [7]
+
+state split:
+  3 + 4 + 1
+```
+
+暂时不做：
+
+```text
+src/padp/training/train_libero.py
+src/padp/serving/serve_libero.py
+```
+
+先完成 `compute_loss` smoke test，再进入正式训练和 service。
+
+### PADP adapter 阶段：字段映射
+
+当前已经验证通过的 openpi loader 返回的是模型态 batch：
+
+```text
+Observation.images:
+  base_0_rgb
+  left_wrist_0_rgb
+  right_wrist_0_rgb
+Observation.state:
+  shape = (B,32)
+actions:
+  shape = (B,50,32)
+```
+
+注意：
+
+```text
+这个 batch 已经经过 openpi 的 ModelTransformFactory。
+其中 state/actions 的 32 维来自 PadStatesAndActions(model_config.action_dim)。
+这不是 LIBERO 的真实 state/action 维度。
+```
+
+PADP 第一版只使用 LIBERO 真实字段：
+
+```text
+obs.images["base_0_rgb"]        -> obs["agentview_image"]
+obs.images["left_wrist_0_rgb"]  -> obs["robot0_eye_in_hand_image"]
+obs.state[..., 0:3]             -> obs["robot0_eef_pos"]
+obs.state[..., 3:7]             -> obs["robot0_eef_quat"]
+obs.state[..., 7:8]             -> obs["robot0_gripper_qpos"]
+actions[..., :7]                -> action
+```
+
+忽略：
+
+```text
+right_wrist_0_rgb
+prompt
+object_targets
+skill labels
+attention maps
+actions[..., 7:32] padding
+state[..., 8:32] padding
+```
+
+### openpi norm stats 与 PADP normalizer
+
+README 中的命令：
+
+```bash
+uv run scripts/compute_norm_stats.py --config-name pi0_libero_object_depth_skill
+```
+
+是给 openpi / GuidedVLA 训练用的。
+
+它做的是：
+
+```text
+LeRobotDataset
+-> repack_transforms
+-> data_transforms
+-> 统计 state/actions
+-> 写入 assets/<repo_id 或 asset_id>/norm_stats.json
+```
+
+随后 openpi 训练时会：
+
+```text
+Normalize(state/actions)
+-> ModelTransformFactory
+   - ResizeImages
+   - TokenizePrompt
+   - PadStatesAndActions(32)
+```
+
+所以：
+
+```text
+openpi norm_stats 不能直接等价于 PADP normalizer。
+openpi 的 32 维 actions 也不能直接作为 PADP action_dim。
+```
+
+PADP 使用自己的：
+
+```text
+padp.model.common.normalizer.LinearNormalizer
+```
+
+当前分两阶段：
+
+```text
+阶段 A：smoke_libero_loss
+  直接用一个 batch fit 临时 PADP normalizer。
+  只验证 shape、forward、compute_loss 能跑通。
+
+阶段 B：正式训练
+  写 padp/training/compute_norm_stats_for_padp.py 或在 train_libero.py 初始化阶段扫描数据。
+  对 adapter 后的 PADP batch 计算 normalizer。
+  保存到 PADP checkpoint。
+```
+
+### adapter 接口层级
+
+我们的目标不是复刻 `src/openpi` 的模型内部。
+
+更准确地说，PADP 的接口只需要等价于 openpi 的数据/训练外部接口：
+
+```text
+同一个 LeRobot 数据集
+同一个 LIBERO 字段语义
+同一个 service/client 评估入口
+不同的模型内部 batch
+```
+
+因此有两个 loader 层级：
+
+```text
+临时 smoke loader：
+  使用 openpi.training.data_loader.create_data_loader(...)
+  得到 Observation/Actions
+  在 adapter 中裁掉 32 维 padding
+
+正式 PADP loader：
+  使用 openpi.training.data_loader.create_torch_dataset(...)
+  应用 repack_transforms + data_transforms
+  跳过 Normalize
+  跳过 ModelTransformFactory
+  直接得到未 padding 的 LIBERO state/actions
+  再转成 PADP batch
+```
+
+当前先做临时 smoke loader，因为它已经被服务器验证能读 batch。
+跑通后再改正式 PADP loader。
+
+### PADP adapter 阶段：形状约定
+
+PADP 当前 `RobomimicObsEncoder` 和 robomimic dataset 约定图像为：
+
+```text
+(B, S, C, H, W)
+float32
+range [0,1]
+```
+
+因此 adapter 要做：
+
+```text
+image:
+  (B,224,224,3) uint8
+  -> float32 / 255.0
+  -> permute to (B,3,224,224)
+  -> keep or resize to (B,3,224,224)
+  -> unsqueeze time dim -> (B,1,3,224,224)
+
+state:
+  (B,32)
+  -> 前 8 维
+  -> 拆为 (B,1,3), (B,1,4), (B,1,1)
+
+action:
+  (B,50,32)
+  -> 前 horizon=40
+  -> 前 action_dim=7
+  -> (B,40,7)
+```
+
+### PADP adapter 阶段：新建 LIBERO shape_meta
+
+不要继续沿用 `mimicgen_abs_padp.yaml` 的 action 10 维，也不要改成 openpi 内部的 32 维。
+
+已新增：
+
+```text
+src/padp/config/libero_va.yaml
+```
+
+内容第一版：
+
+```yaml
+name: libero_va
+
+shape_meta: &shape_meta
+  obs:
+    agentview_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eef_pos:
+      shape: [3]
+    robot0_eef_quat:
+      shape: [4]
+    robot0_gripper_qpos:
+      shape: [1]
+  action:
+    shape: [7]
+
+abs_action: &abs_action False
+```
+
+说明：
+
+```text
+LIBERO/openpi 输出的 action 是 7 维 delta action。
+PADP-VA 第一版按 7 维训练，避免为了复用 mimicgen 的 10 维 action 做无意义 padding。
+openpi batch 中的 32 维不是时序长度，而是模型 action/state padding 维度。
+PADP 的时序长度是 horizon=40。
+```
+
+当前 `libero_va.yaml` 使用 DINOv3 encoder，所以图像 shape 保持：
+
+```text
+[3, 224, 224]
+```
+
+如果后续切回 `RobomimicObsEncoder`，再改为：
+
+```text
+[3, 224, 224]
+```
+
+### PADP norm stats 脚本计划
+
+需要参考 openpi：
+
+```text
+scripts/compute_norm_stats.py
+```
+
+但不能直接使用它自动得到 PADP normalizer。
+
+原因：
+
+```text
+compute_norm_stats.py 生成 openpi Normalize 使用的 NormStats。
+PADP 使用 padp.model.common.normalizer.LinearNormalizer。
+openpi 统计的是 openpi data_transforms 后的 state/actions。
+PADP 需要统计 adapter 后的 obs/action。
+```
+
+后续新增：
+
+```text
+src/padp/training/compute_norm_stats_for_padp.py
+```
+
+推荐实现：
+
+```text
+1. 读取 openpi config，例如 pi0_libero_object。
+2. 覆盖 repo_id=ybwowen/libero。
+3. 覆盖 local_root_dir=/home/hy/.cache/huggingface/lerobot/ybwowen/libero。
+4. 使用 openpi.training.data_loader.create_torch_dataset。
+5. 应用 repack_transforms + data_transforms。
+6. 不应用 openpi Normalize。
+7. 不应用 ModelTransformFactory。
+8. 调用 padp.data.libero_batch_adapter 转成 PADP batch。
+9. 对 PADP action 和 lowdim obs fit LinearNormalizer。
+10. image 使用 get_image_range_normalizer。
+11. 保存 normalizer，例如 checkpoints/padp_libero_va/normalizer.pt。
+```
+
+当前第一版先不做正式统计，先在 `smoke_libero_loss.py` 里用一个 batch 临时 fit normalizer。等 smoke loss 跑通后再补正式脚本。
+
+### PADP adapter 阶段：smoke loss
+
+新增：
+
+```text
+src/padp/training/smoke_libero_loss.py
+```
+
+目标链路：
+
+```text
+openpi data loader
+-> libero_batch_adapter
+-> SlidingWindowDiffusionPolicy
+-> compute_loss
+-> print loss mean
+```
+
+建议命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+
+uv run python -m padp.training.smoke_libero_loss \
+  --openpi-config pi0_libero_object \
+  --repo-id ybwowen/libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 2 \
+  --horizon 40 \
+  --device cuda:0
+```
+
+这一步成功后，才进入：
+
+```text
+src/padp/training/train_libero.py
+src/padp/serving/serve_libero.py
+```
+
+如果 `ybwowen/libero` 可以打开，也可以再测试 openpi data loader 的默认下载路径：
+
+```bash
+uv run python scripts/test_data_loader.py \
+  --config-name pi0_libero_object \
+  --framework pytorch \
+  --split train \
+  --num-batches 1 \
+  --num-workers 0
+```
+
+如果 `ybwowen/libero` 也确认数据内容版本不兼容，再选下面两条之一：
+
+```text
+路线 A：检查是否需要 Hugging Face 登录或指定 dataset revision。
+路线 B：使用 GuidedVLA 当前 lerobot v3.0，从原始 LIBERO/RLDS 数据重新转换生成一个 v3.0 LeRobot 数据集。
+```
+
+当前建议先测 `ybwowen/libero`，因为它是 README 明确发布的数据集。只有它也失败时，才进入重新转换。
+
+需要新增或迁移的转换脚本：
+
+```text
+GuidedVLA/examples/libero/convert_libero_data_to_lerobot.py
+```
+
+注意：`GuidedVLA/examples/libero` 当前没有这个转换脚本；`FASTER_hy/examples/libero/convert_libero_data_to_lerobot.py` 有旧版脚本，但它是为旧 LeRobot API 写的，不能直接假设兼容 v3.0。可以参考字段映射，但要按 GuidedVLA 当前 `lerobot.datasets.lerobot_dataset.LeRobotDataset.create(...)` API 改写。
+
+转换目标字段保持和当前 `LeRobotLiberoDataConfig` 一致：
+
+```text
+image
+wrist_image
+state
+actions
+task / prompt metadata
+```
+
+转换后的数据集必须满足：
+
+```text
+meta/info.json 中 codebase_version 与 GuidedVLA 当前 lerobot 兼容。
+GuidedVLA 当前 LeRobotDatasetMetadata 能直接打开。
+openpi.training.data_loader.create_data_loader 能读出 batch。
+```
+
+转换完成后，再重新测试 LIBERO batch：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+
+uv run python - <<'PY'
+import dataclasses
+
+from openpi.training import config as _config
+from openpi.training import data_loader as _data_loader
+
+cfg = _config.get_config("pi0_libero_object")
+cfg = dataclasses.replace(
+    cfg,
+    batch_size=2,
+    num_workers=0,
+    data=dataclasses.replace(
+        cfg.data,
+        repo_id="ybwowen/libero",
+    ),
+)
+
+loader = _data_loader.create_data_loader(
+    cfg,
+    framework="pytorch",
+    split="train",
+    shuffle=False,
+    num_batches=1,
+    skip_norm_stats=True,
+)
+
+batch = next(iter(loader))
+if len(batch) == 3:
+    obs, actions, object_targets = batch
+else:
+    obs, actions = batch
+    object_targets = None
+
+print("obs type:", type(obs))
+print("image keys:", list(obs.images.keys()))
+for key, value in obs.images.items():
+    print("image", key, tuple(value.shape), value.dtype, float(value.min()), float(value.max()))
+print("state:", tuple(obs.state.shape), obs.state.dtype, float(obs.state.min()), float(obs.state.max()))
+print("actions:", tuple(actions.shape), actions.dtype, float(actions.min()), float(actions.max()))
+print("object_targets:", None if object_targets is None else object_targets.keys())
+print("LIBERO batch read ok")
+PY
+```
+
+如果这一步通过，下一步才开始新增 PADP adapter。
+
+如果没有 v3.0 LIBERO 数据集，这一步不会通过。因此在 PADP adapter 前，先完成：
+
+```text
+1. 找到 v3.0 兼容的 LIBERO 数据；
+2. 或用 GuidedVLA 当前 lerobot 重新转换 LIBERO 原始数据。
+```
+
+外部接口一致即可：
+
+```text
+输入：环境 observation
+输出：{"actions": action_chunk}
+评估：复用 examples/libero/main.py 或类似 client
+```
+
+## 关键认识
+
+### pi05 是 VLA
+
+pi05 使用：
+
+```text
+图像
+状态
+语言 prompt
+动作
+```
+
+它的训练和推理流程中，`libero_policy.py` 负责把 LIBERO 数据/环境输入适配成 openpi 模型需要的字段。
+
+### PADP 当前是 VA
+
+PADP 使用：
+
+```text
+图像
+状态
+动作
+```
+
+PADP 当前没有：
+
+```text
+语言 tokenizer
+语言 encoder
+prompt condition
+VLM backbone
+```
+
+因此，PADP 不能天然等价于 pi05。
+
+## libero_policy.py 和 PADP policy 的区别
+
+`src/openpi/policies/libero_policy.py` 不是神经网络策略主体。
+
+它更像是：
+
+```text
+LIBERO 数据/环境适配器
+```
+
+作用：
+
+```text
+把 LIBERO 的字段：
+  observation/image
+  observation/wrist_image
+  observation/state
+  prompt
+  actions
+
+转换成 openpi 模型需要的：
+  image.base_0_rgb
+  image.left_wrist_0_rgb
+  state
+  prompt tokens
+  padded actions
+```
+
+而 `padp.policy.robomimic.diffusion_unet_hybrid_padp.SlidingWindowDiffusionPolicy` 是真正的模型策略：
+
+```text
+obs_encoder
+ConditionalUnet1D
+diffusion loss
+predict_action
+normalizer
+```
+
+所以后续 PADP 需要的是：
+
+```text
+仿照 libero_policy.py 的思想，写一个 padp 的 LIBERO adapter。
+不是把 PADP policy 改成 openpi policy。
+```
+
+## 推荐路线：先做 PADP-VA LIBERO baseline
+
+这是第一版最小闭环。
+
+### 阶段 1：验证 openpi LIBERO 数据读取
+
+目的：
+
+```text
+确认 GuidedVLA 当前环境可以读取 LIBERO LeRobot 数据。
+```
+
+注意：
+
+```text
+优先使用 README 发布的 ybwowen/libero。
+如果需要指定 LEROBOT_ROOT，它应该指向数据集根目录，不是 meta 目录。
+```
+
+正确示例：
+
+```bash
+export LEROBOT_ROOT=/home/hy/.cache/huggingface/lerobot/ybwowen/libero
+```
+
+不是：
+
+```bash
+export LEROBOT_ROOT=/home/hy/.cache/huggingface/lerobot/ybwowen/libero/meta
+```
+
+如果创建 transform 时下载 tokenizer 失败，需要先设置本地 tokenizer：
+
+```bash
+find ~/.cache -name "paligemma_tokenizer.model" -type f 2>/dev/null
+find ~/Desktop -name "paligemma_tokenizer.model" -type f 2>/dev/null
+```
+
+找到后：
+
+```bash
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/path/to/paligemma_tokenizer.model
+```
+
+然后测试：
+
+```bash
+uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
+```
+
+### 阶段 2：新增 PADP LIBERO batch adapter
+
+新增文件：
+
+```text
+src/padp/data/__init__.py
+src/padp/data/openpi_libero_loader.py
+src/padp/data/libero_batch_adapter.py
+```
+
+职责：
+
+```text
+读取 openpi 的 LIBERO batch
+转成 PADP batch
+```
+
+目标格式：
+
+```python
+{
+    "obs": {
+        "agentview_image": ...,
+        "robot0_eye_in_hand_image": ...,
+        "robot0_eef_pos": ...,
+        "robot0_eef_quat": ...,
+        "robot0_gripper_qpos": ...,
+    },
+    "action": ...,
+}
+```
+
+注意：
+
+```text
+第一版可以不使用 prompt。
+prompt 可以保留在 batch 里做日志，但不输入 PADP。
+```
+
+### 阶段 3：写一个最小 compute_loss 测试
+
+新增测试脚本或临时命令，目标是：
+
+```text
+openpi LIBERO batch
+-> padp libero_batch_adapter
+-> SlidingWindowDiffusionPolicy.compute_loss()
+-> 得到 scalar / per-sample loss
+```
+
+这一步比直接训练更重要。
+
+因为它能验证：
+
+```text
+字段映射是否正确
+图像 shape 是否正确
+action dim 是否正确
+PADP normalizer 是否可用
+obs_encoder 是否能处理 LIBERO 图像 key
+```
+
+### 阶段 4：新增 PADP LIBERO 训练入口
+
+新增文件：
+
+```text
+src/padp/training/__init__.py
+src/padp/training/train_libero.py
+src/padp/training/checkpoint.py
+```
+
+目标命令：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --openpi-config pi0_libero_object \
+  --repo-id ybwowen/libero \
+  --exp-name padp_libero_smoke \
+  --max-steps 100
+```
+
+第一版只做 smoke train。
+
+### 阶段 5：新增 PADP websocket serve
+
+新增文件：
+
+```text
+src/padp/serving/__init__.py
+src/padp/serving/policy_factory.py
+src/padp/serving/serve_libero.py
+```
+
+目标命令：
+
+```bash
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-dir checkpoints/padp_libero/padp_libero_smoke/<step> \
+  --port 8000
+```
+
+输出必须是：
+
+```python
+{"actions": action_chunk}
+```
+
+这样才能复用 LIBERO client。
+
+### 阶段 6：复用 LIBERO client 评估
+
+命令：
+
+```bash
+examples/libero/.venv/bin/python examples/libero/main.py \
+  --args.task-suite-name libero_spatial \
+  --args.num-trials-per-task 1 \
+  --args.save-name padp_libero_smoke \
+  --args.host 127.0.0.1 \
+  --args.port 8000
+```
+
+先 1 trial，确认接口能跑。
+
+## 语言条件的后续路线
+
+如果 PADP-VA baseline 跑通，再考虑 PADP-VLA。
+
+可选做法：
+
+```text
+1. 使用 frozen text encoder 把 prompt 编码成 language embedding。
+2. 将 language embedding 拼到 global_cond。
+3. 修改 ConditionalUnet1D 的 global_cond_dim。
+4. 训练时输入 prompt embedding。
+5. 推理时从 LIBERO task description 生成同样 embedding。
+```
+
+这才是“让 PADP 具备语言条件”的路线。
+
+但这不是第一版。
+
+## robomimic -> pi05 格式转换路线
+
+这是另一条路线，不建议和第一版 PADP-LIBERO 同时做。
+
+目标：
+
+```text
+把 robomimic/MimicGen 数据转换成 LeRobot/openpi 格式。
+让 pi05 和 PADP 都吃同一份转换后的数据。
+```
+
+需要做：
+
+```text
+1. HDF5 -> LeRobot dataset
+2. 图像 key 映射
+3. state/action 映射
+4. task prompt 生成
+5. norm stats
+6. pi05 config
+7. PADP adapter
+8. service/client
+```
+
+优点：
+
+```text
+更适合最终公平比较。
+```
+
+缺点：
+
+```text
+工程量更大。
+不适合作为当前第一步。
+```
+
+## 当前建议
+
+当前建议选择：
+
+```text
+先走 PADP-VA LIBERO baseline。
+```
+
+也就是：
+
+```text
+PADP 不使用语言。
+先接 LIBERO 图像、状态、动作。
+先跑通训练和 websocket 评估。
+```
+
+理由：
+
+```text
+这是最小闭环。
+它能验证 PADP 是否能在 GuidedVLA 的外部接口下运行。
+等 VA baseline 能跑，再讨论语言条件或 robomimic 格式转换。
+```
