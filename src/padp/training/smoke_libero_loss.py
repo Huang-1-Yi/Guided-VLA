@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _datetime
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,8 @@ def main() -> None:
 def register_omegaconf_resolvers() -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
+    if not OmegaConf.has_resolver("now"):
+        OmegaConf.register_new_resolver("now", lambda pattern: _datetime.datetime.now().strftime(pattern))
 
 
 def apply_overrides(cfg: Any, args: argparse.Namespace) -> None:
