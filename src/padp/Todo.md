@@ -12,17 +12,38 @@
 3. openpi batch 中的 state/actions 形状是 (B,32) 和 (B,50,32)，这是 openpi 模型 padding 后的格式，不是 PADP 的真实状态/动作维度。
 4. PADP-VA 第一版使用 LIBERO 真实语义：state=8，action=7，horizon=40。
 5. 已新增顶层配置 C:\QClaw\GuidedVLA\src\padp\config\libero_va.yaml。
-6. 当前 DINOv3 encoder 使用 224x224 图像，因此 PADP adapter 不应再写成 84x84。
-7. 原始 scripts/compute_norm_stats.py 只服务 openpi 训练，不能直接生成 PADP LinearNormalizer。
+6. 已新增 smoke 专用配置 C:\QClaw\GuidedVLA\src\padp\config\libero_va_smoke.yaml。
+7. 已新增 src/padp/data/libero_batch_adapter.py，把 openpi LIBERO batch 裁剪为 PADP batch。
+8. 已新增 src/padp/data/openpi_libero_loader.py，复用 openpi data loader 读取 ybwowen/libero。
+9. 已新增 src/padp/training/smoke_libero_loss.py，并在服务器上跑通。
+10. 当前 smoke 使用 224x224 图像、state=8、action=7、horizon=40。
+11. 已新增 src/padp/training/compute_norm_stats_for_padp.py，用于保存 PADP LinearNormalizer。
+12. 已新增 src/padp/config/libero_va_train.yaml，作为不含 Hydra runtime 字段的 PADP-VA 训练配置。
+13. 已新增 src/padp/training/train_libero.py，参考 PADP 原训练循环实现最小 LIBERO smoke train。
+14. 原始 scripts/compute_norm_stats.py 只服务 openpi 训练，不能直接生成 PADP LinearNormalizer。
+```
+
+服务器 smoke 成功输出要点：
+
+```text
+PADP obs keys: agentview_image, robot0_eye_in_hand_image, robot0_eef_pos, robot0_eef_quat, robot0_gripper_qpos
+agentview_image: (2,1,3,224,224)
+robot0_eye_in_hand_image: (2,1,3,224,224)
+action: (2,40,7)
+Obs encoder output shape: (392,)
+Obs feature dim: 392
+loss_b shape: (2,)
+loss mean: 3.1426055431365967
+PADP LIBERO smoke loss ok
 ```
 
 下一步：
 
 ```text
-1. 新增 src/padp/data/libero_batch_adapter.py，把 openpi LIBERO batch 裁剪为 PADP batch。
-2. 新增 src/padp/data/openpi_libero_loader.py，复用 openpi data loader 读取 ybwowen/libero。
-3. 新增 src/padp/training/smoke_libero_loss.py，先临时 fit 一个 PADP normalizer，验证 policy.compute_loss 能跑通。
-4. smoke loss 通过后，再新增 src/padp/training/compute_norm_stats_for_padp.py，正式保存 PADP normalizer。
+1. 在服务器运行 compute_norm_stats_for_padp.py，生成 checkpoints/padp_libero_va/normalizer.pt。
+2. 在服务器运行 train_libero.py，先做 10~100 step smoke train，确认 loss/backward/checkpoint 正常。
+3. 新增 src/padp/serving/serve_libero.py，让 PADP checkpoint 通过 websocket 输出 {"actions": ...}。
+4. 复用 examples/libero/main.py 评估 PADP-VA 成功率，并和 pi05 在同一数据源/环境下对比。
 ```
 
 ## 当前结论

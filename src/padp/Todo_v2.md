@@ -14,15 +14,13 @@ PADP 输入：裁掉 openpi padding，只保留 LIBERO 真实 state/action
 时间长度：PADP horizon=40
 ```
 
-马上要做的不是再跑 `compute_norm_stats.py`，而是实现 PADP adapter 和 smoke loss：
+PADP adapter 和最小 smoke loss 已完成：
 
 ```text
 src/padp/data/libero_batch_adapter.py
 src/padp/data/openpi_libero_loader.py
 src/padp/training/smoke_libero_loss.py
 ```
-
-`scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 后续需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
 
 smoke 测试已改用专门配置：
 
@@ -31,6 +29,77 @@ src/padp/config/libero_va_smoke.yaml
 ```
 
 这个配置不包含 `hydra.run`、`hydra.sweep`、时间插值或 `hydra.job.num`，避免直接用 `OmegaConf.load()` 时触发 Hydra runtime resolver 问题。正式训练配置仍保留 `src/padp/config/libero_va.yaml`。
+
+服务器已跑通：
+
+```text
+uv run python -m padp.training.smoke_libero_loss \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --device cuda:1
+```
+
+成功标志：
+
+```text
+PADP obs keys 正确
+action shape = (2,40,7)
+Obs encoder output shape = (392,)
+loss_b shape = (2,)
+loss mean = 3.1426055431365967
+PADP LIBERO smoke loss ok
+```
+
+当前不要再重复修 adapter。下一步进入正式训练准备：
+
+```text
+1. src/padp/training/compute_norm_stats_for_padp.py 已新增
+   - 参考 scripts/compute_norm_stats.py 的数据遍历方式
+   - 保存 PADP 的 LinearNormalizer，不保存 openpi NormStats
+
+2. src/padp/config/libero_va_train.yaml 已新增
+   - 用于 standalone PyTorch smoke train
+   - 不包含 hydra.run / hydra.sweep / now resolver
+
+3. src/padp/training/train_libero.py 已新增
+   - 参考 PADP 原 train_padp_workspace_v3.py 的训练循环
+   - 使用 openpi LIBERO loader + PADP adapter
+   - 加载 PADP normalizer
+   - 保存 checkpoint
+
+4. 下一步写 src/padp/serving/serve_libero.py
+   - 加载 PADP checkpoint 和 normalizer
+   - 提供 websocket policy service
+   - 输出接口对齐 {"actions": action_chunk}
+
+5. 复用 examples/libero/main.py 做 LIBERO client 评估
+```
+
+`scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
+
+服务器下一步命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+uv run python -m padp.training.compute_norm_stats_for_padp \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 8 \
+  --num-workers 0 \
+  --num-batches 128 \
+  --output-path checkpoints/padp_libero_va/normalizer.pt
+
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_smoke \
+  --batch-size 2 \
+  --num-workers 0 \
+  --max-train-steps 10 \
+  --checkpoint-every 10 \
+  --device cuda:1
+```
 
 ## 目标重新定义
 

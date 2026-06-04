@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -173,3 +174,28 @@ def tensor_to_stat(tensor: torch.Tensor, *, last_dim: int) -> dict[str, Any]:
             feature_dim *= int(size)
         flat = tensor.reshape(-1, feature_dim)
     return array_to_stats(flat.numpy())
+
+
+def save_padp_normalizer(
+    normalizer: LinearNormalizer,
+    path: str | Path,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "normalizer_state_dict": normalizer.state_dict(),
+            "metadata": metadata or {},
+        },
+        path,
+    )
+
+
+def load_padp_normalizer(path: str | Path, *, map_location: str | torch.device = "cpu") -> LinearNormalizer:
+    payload = torch.load(Path(path), map_location=map_location)
+    normalizer = LinearNormalizer()
+    state_dict = payload["normalizer_state_dict"] if "normalizer_state_dict" in payload else payload
+    normalizer.load_state_dict(state_dict)
+    return normalizer
