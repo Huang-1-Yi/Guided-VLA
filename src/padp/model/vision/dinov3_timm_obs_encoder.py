@@ -455,7 +455,7 @@ class TimmObsEncoder(ModuleAttrMixin):
         assert len(example_output.shape) == 2
         assert example_output.shape[0] == 1
         
-        return example_output.shape
+        return example_output.shape[1:]
 
     @torch.jit.ignore
     def no_weight_decay(self):

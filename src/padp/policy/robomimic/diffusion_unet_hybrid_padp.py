@@ -64,8 +64,12 @@ class SlidingWindowDiffusionPolicy(BaseImagePolicy):
                 eval_fixed_crop=eval_fixed_crop,
             )
         # Create diffusion model.
-        obs_feature_dim = obs_encoder.output_shape()[0]
-        print(f"Obs encoder output shape: {obs_encoder.output_shape()}")
+        obs_encoder_output_shape = tuple(obs_encoder.output_shape())
+        if len(obs_encoder_output_shape) > 1 and obs_encoder_output_shape[0] == 1:
+            obs_feature_dim = math.prod(obs_encoder_output_shape[1:])
+        else:
+            obs_feature_dim = math.prod(obs_encoder_output_shape)
+        print(f"Obs encoder output shape: {obs_encoder_output_shape}")
         print(f"Obs feature dim: {obs_feature_dim}")
 
         input_dim = action_dim
