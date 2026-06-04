@@ -186,18 +186,26 @@ PADP LIBERO train finished
    - 调用 policy.predict_action(obs_dict)
    - 确认输出 action 形状为 (B,n_action_steps,7)
    - 确认输出 action_pred 形状为 (B,horizon,7)
+   - 服务器已跑通：action=(2,1,7)，action_pred=(2,40,7)，没有 NaN/Inf
 
-7. 下一步在服务器运行 checkpoint 单批推理 smoke
-
-8. 再写 src/padp/serving/serve_libero.py
+7. src/padp/serving/serve_libero.py 已新增
+   - 复用 openpi.serving.websocket_policy_server.WebsocketPolicyServer
+   - 实现 openpi_client BasePolicy 的 infer(obs) 接口
    - 加载 PADP checkpoint 和 normalizer
-   - 提供 websocket policy service
-   - 输出接口对齐 {"actions": action_chunk}
+   - 返回 {"actions": action_chunk}
+
+8. examples/libero/main.py 已新增 selected_task_ids
+   - 便于先运行单个 task、单个 trial 的最小闭环评估
+
+9. 当前 service state 适配规则
    - examples/libero/main.py 发来的字段是 observation/image、observation/wrist_image、observation/state、prompt
    - PADP-VA 第一版忽略 prompt
-   - 需要把 observation/state 中的 axis-angle 旋转转回 PADP 训练使用的 quaternion 格式
+   - 当前 checkpoint 训练时使用 LiberoPadpBatchAdapter 的切片：state[0:3]、state[3:7]、state[7:8]
+   - smoke_libero_predict 输出显示 state[3:7] 并不是严格单位 quaternion 分布
+   - 因此第一版 service 必须保持同样切片，不额外把 axis-angle 转 quaternion
+   - 如果后续要修正为严格 pos+quat+gripper 语义，需要重新生成 normalizer 并重新训练 PADP checkpoint
 
-9. 复用 examples/libero/main.py 做 LIBERO client 评估
+10. 下一步复用 examples/libero/main.py 做 LIBERO client 评估
    - 先运行 1 个 task、1 个 trial 的最小评估
    - 再扩大到完整 task suite
 ```
@@ -274,10 +282,47 @@ output[action_pred]: shape=(2,40,7)
 PADP LIBERO smoke predict ok
 ```
 
-checkpoint 单批推理通过后，再进入 websocket service：
+checkpoint 单批推理已通过。现在进入 websocket service。
+
+终端 1：启动 PADP policy server。
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_1000step/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1
+```
+
+终端 2：启动 LIBERO client，先跑单个 task、单个 trial。
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+export PYTHONPATH="$PWD/third_party/libero${PYTHONPATH:+:$PYTHONPATH}"
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 \
+  --args.num-trials-per-task 1 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_smoke \
+  --args.results-json-path data/libero/padp_results_smoke.json
+```
+
+说明：
 
 ```text
-src/padp/serving/serve_libero.py
+server 当前默认 action_chunk_size=1，所以 client 也要设置 replan_steps=1。
+如果希望保持 examples/libero/main.py 默认 replan_steps=5，则 server 改为 --action-chunk-size 5。
+但第一轮建议先使用 replan_steps=1，保证和当前训练配置 n_action_steps=1 更一致。
 ```
 
 ## 目标重新定义

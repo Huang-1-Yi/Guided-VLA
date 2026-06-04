@@ -38,6 +38,7 @@ class Args:
     task_suite_name: str = (
         "libero_spatial"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     )
+    selected_task_ids: Optional[List[int]] = None
     num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
     num_trials_per_task: int = 50  # Number of rollouts per task
 
@@ -202,6 +203,10 @@ def eval_libero(args: Args) -> None:
     task_suite = benchmark_dict[args.task_suite_name]()
     num_tasks_in_suite = task_suite.n_tasks
     logging.info(f"Task suite: {args.task_suite_name}")
+    selected_task_ids = args.selected_task_ids if args.selected_task_ids is not None else list(range(num_tasks_in_suite))
+    for task_id in selected_task_ids:
+        if task_id < 0 or task_id >= num_tasks_in_suite:
+            raise ValueError(f"Task id {task_id} is out of range for {args.task_suite_name} with {num_tasks_in_suite} tasks.")
 
     pathlib.Path(args.video_out_path).mkdir(parents=True, exist_ok=True)
 
@@ -221,11 +226,11 @@ def eval_libero(args: Args) -> None:
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
 
     # Initialize results file with all task IDs
-    _init_results_file(args, list(range(num_tasks_in_suite)))
+    _init_results_file(args, selected_task_ids)
 
     # Start evaluation
     total_episodes, total_successes = 0, 0
-    for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
+    for task_id in tqdm.tqdm(selected_task_ids):
         # Get task
         task = task_suite.get_task(task_id)
 

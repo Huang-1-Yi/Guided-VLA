@@ -34,6 +34,10 @@
 25. PADP policy 已有 predict_action(obs_dict)，后续 serving 只需要做 LIBERO client observation 到 PADP obs_dict 的适配。
 26. 已确认 train_1000step/last.pt 可用 weights_only=False 正常读取，checkpoint keys 为 cfg、model、normalizer、optimizer、step，step=1000。
 27. 已新增 src/padp/training/smoke_libero_predict.py，用于加载 checkpoint 后做单批 predict_action 推理烟测。
+28. 服务器上已跑通 smoke_libero_predict.py，输出 action=(2,1,7)、action_pred=(2,40,7)，没有 NaN/Inf。
+29. 已新增 src/padp/serving/serve_libero.py，复用 openpi.websocket server 协议，向 examples/libero/main.py 返回 {"actions": ...}。
+30. 已修改 examples/libero/main.py，新增 selected_task_ids，可先只评估单个 task。
+31. 当前服务端 state 适配保持和 LiberoPadpBatchAdapter 一致：state[0:3]、state[3:7]、state[7:8]。不要在第一版 service 中额外把 axis-angle 转 quaternion，否则会和已训练 checkpoint 的输入分布不一致。
 ```
 
 服务器 smoke 成功输出要点：
@@ -53,10 +57,11 @@ PADP LIBERO smoke loss ok
 下一步：
 
 ```text
-1. 在服务器运行 src/padp/training/smoke_libero_predict.py，确认 predict_action 输出 action/action_pred shape 正常且没有 NaN/Inf。
-2. 新增 src/padp/serving/serve_libero.py，让 PADP checkpoint 通过 websocket 输出 {"actions": ...}。
-3. 复用 examples/libero/main.py 先做 1 个 task、1 个 trial 的最小评估，再扩大到完整 LIBERO 评估。
-4. 和 pi05 在同一 task_suite、num_trials_per_task、seed 下对比成功率。
+1. 在服务器启动 src/padp/serving/serve_libero.py。
+2. 用 examples/libero/main.py 先做 1 个 task、1 个 trial 的最小 service/client 闭环评估。
+3. 如果 action_chunk_size=1，则 client 也使用 replan_steps=1；如果要用默认 replan_steps=5，server 需要同步设置 action_chunk_size=5。
+4. 最小闭环通过后，再扩大到完整 LIBERO 评估。
+5. 和 pi05 在同一 task_suite、num_trials_per_task、seed 下对比成功率。
 ```
 
 ## 当前结论
