@@ -24,6 +24,14 @@ src/padp/training/smoke_libero_loss.py
 
 `scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 后续需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
 
+smoke 测试已改用专门配置：
+
+```text
+src/padp/config/libero_va_smoke.yaml
+```
+
+这个配置不包含 `hydra.run`、`hydra.sweep`、时间插值或 `hydra.job.num`，避免直接用 `OmegaConf.load()` 时触发 Hydra runtime resolver 问题。正式训练配置仍保留 `src/padp/config/libero_va.yaml`。
+
 ## 目标重新定义
 
 目标不是把 PADP 直接改成 pi05。

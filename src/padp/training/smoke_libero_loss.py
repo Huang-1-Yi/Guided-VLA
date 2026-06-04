@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as _datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,7 @@ from padp.data.openpi_libero_loader import OpenPiLiberoPadpDataset
 
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parents[3]
-    default_config = repo_root / "src" / "padp" / "config" / "libero_va.yaml"
+    default_config = repo_root / "src" / "padp" / "config" / "libero_va_smoke.yaml"
 
     parser = argparse.ArgumentParser(description="Run one PADP-VA LIBERO loss smoke test.")
     parser.add_argument("--config-path", type=Path, default=default_config)
@@ -100,8 +99,6 @@ def main() -> None:
 def register_omegaconf_resolvers() -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
-    if not OmegaConf.has_resolver("now"):
-        OmegaConf.register_new_resolver("now", lambda pattern: _datetime.datetime.now().strftime(pattern))
 
 
 def apply_overrides(cfg: Any, args: argparse.Namespace) -> None:
