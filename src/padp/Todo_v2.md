@@ -208,6 +208,38 @@ PADP LIBERO train finished
 10. 下一步复用 examples/libero/main.py 做 LIBERO client 评估
    - 先运行 1 个 task、1 个 trial 的最小评估
    - 再扩大到完整 task suite
+
+11. 最小 service/client 闭环已完成
+   - PADP server 已启动并监听 0.0.0.0:8000
+   - LIBERO client 已连接 ws://127.0.0.1:8000
+   - 已运行 libero_object task 0、num_trials_per_task=1、replan_steps=1
+   - episode 正常跑完，结果为 Success: False，Total episodes: 1
+   - 这说明接口闭环成功，但当前 1000 step PADP-VA checkpoint 尚不能说明成功率
+   - 末尾 EGL_NOT_INITIALIZED 是 MuJoCo/EGL 析构阶段报错，当前不影响结果文件和 episode 统计
+   - assets/datasets path warning 暂不阻塞评估；后续 client 启动前建议清理 PYTHONPATH，避免继承其他 conda 环境中的 LIBERO 路径
+
+12. 小批量稳定性评估已完成
+   - 运行 libero_object task 0、1、2
+   - 每个 task 2 个 trial
+   - 总计 6 个 episode
+   - websocket、仿真、action 返回、结果写入均稳定
+   - 结果为 0/6 success
+   - `data/libero/padp_results_small.json` 已确认写出 total_episodes=6、total_successes=0、success_rate=0.0
+   - `data/libero/padp_videos_small` 已确认写出 6 个 mp4
+   - 结论：service/client 链路稳定；下一阶段重点不是继续扩完整评估，而是提升 PADP checkpoint 策略质量
+
+13. 10k 训练首次启动失败
+   - 报错位置：openpi loader 创建 tokenizer 时
+   - 报错内容：FileNotFoundError: openpi-assets/checkpoints/paligemma_tokenizer.model
+   - 原因：训练命令仍受 examples/libero/.venv 客户端环境影响，且未设置 OPENPI_PALIGEMMA_TOKENIZER_PATH
+   - 该错误发生在读取第一个 batch 前，不是 PADP 训练循环问题
+
+14. 已新增策略质量诊断工具
+   - `src/padp/training/diagnose_libero_semantics.py`
+   - 打印 openpi loader 的 state/actions shape、state[:8]、actions[:7] 统计和样例
+   - 打印 PADP adapter 后的 obs/action 统计
+   - `src/padp/serving/serve_libero.py` 已新增 `--debug-log-steps`
+   - service 可记录前 N 次 evaluation observation/state 切片和 PADP action 输出
 ```
 
 `scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
@@ -301,6 +333,30 @@ uv run python -m padp.serving.serve_libero \
 
 终端 2：启动 LIBERO client，先跑单个 task、单个 trial。
 
+如果 `examples/libero/.venv/bin/activate` 不存在，先创建客户端环境：
+
+```bash
+cd ~/Desktop/Guided-VLA
+
+uv venv --python 3.8 examples/libero/.venv
+source examples/libero/.venv/bin/activate
+
+uv pip sync examples/libero/requirements.txt third_party/libero/requirements.txt \
+  --extra-index-url https://download.pytorch.org/whl/cu113 \
+  --index-strategy=unsafe-best-match
+
+uv pip install -e packages/openpi-client
+uv pip install -e third_party/libero
+```
+
+如果 `uv venv --python 3.8` 提示找不到 Python 3.8，先运行：
+
+```bash
+uv python install 3.8
+```
+
+环境创建完成后再运行 client：
+
 ```bash
 cd ~/Desktop/Guided-VLA
 source examples/libero/.venv/bin/activate
@@ -323,6 +379,156 @@ MUJOCO_GL=egl python examples/libero/main.py \
 server 当前默认 action_chunk_size=1，所以 client 也要设置 replan_steps=1。
 如果希望保持 examples/libero/main.py 默认 replan_steps=5，则 server 改为 --action-chunk-size 5。
 但第一轮建议先使用 replan_steps=1，保证和当前训练配置 n_action_steps=1 更一致。
+如果 client 端报 `ModuleNotFoundError: imageio`，说明当前没有进入 examples/libero/.venv，而是在 base 或其他环境中运行。
+```
+
+最小闭环已跑通后的检查命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+
+python -m json.tool data/libero/padp_results_smoke.json
+ls -lh data/libero/padp_videos_smoke
+```
+
+下一步做小批量稳定性评估。保持 PADP server 运行，client 使用干净 PYTHONPATH：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+
+python - <<'PY'
+import libero
+import openpi_client
+print("libero:", libero.__file__)
+print("openpi_client:", openpi_client.__file__)
+PY
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_small \
+  --args.results-json-path data/libero/padp_results_small.json
+```
+
+如果 EGL 析构报错频繁干扰日志，可以改成：
+
+```bash
+MUJOCO_GL=glx python examples/libero/main.py ...
+```
+
+小批量评估结束后检查：
+
+```bash
+python -m json.tool data/libero/padp_results_small.json
+ls -lh data/libero/padp_videos_small
+```
+
+当前小批量评估结论：
+
+```text
+total_episodes = 6
+total_successes = 0
+success_rate = 0.0
+videos = 6 mp4 files in data/libero/padp_videos_small
+```
+
+这不是接口失败。它说明当前 `train_1000step/last.pt` 还只是迁移链路 checkpoint，不是可用于成功率对比的 checkpoint。
+
+注意：当前 1000 step checkpoint 的 `Success: False` 不应被解释为 PADP 失败定论。它只说明当前极短训练的模型还没有形成可用策略。真正比较 PADP 与 pi05 成功率前，至少需要：
+
+```text
+1. 更长训练。
+2. 明确 state/action 语义是否与 LIBERO client 完全一致。
+3. 固定 task_suite、selected_task_ids、num_trials_per_task、seed 后再横向对比。
+```
+
+下一步建议从“继续扩大评估”切换为“策略质量排查”：
+
+```text
+1. 核对训练 batch 的 state[0:8] 与 examples/libero/main.py 中 observation/state 的语义是否完全一致。
+2. 核对训练 action[:7] 与 env.step(action.tolist()) 所需动作语义是否一致。
+3. 先训练更长步数，例如 10k、50k，再用同一套 smoke/small eval 命令测试。
+4. 如果希望使用 replan_steps=5，则 server 用 --action-chunk-size 5，并重新跑 1 个 episode 闭环。
+5. 决定是否修正 state 表示为严格 pos+axis-angle+gripper 或 pos+quat+gripper；一旦修改，就必须重新生成 normalizer 并重新训练。
+```
+
+建议下一轮先做两个诊断，而不是直接跑完整评估：
+
+```text
+诊断 A：打印训练 loader 中 state[:8]、actions[:7] 的统计和样例，确认 state[3:7] 到底是什么表示。
+诊断 B：在 service 端记录前几个 env observation/state 和 PADP actions，确认动作数值范围是否异常。
+```
+
+如果只是想先看更长训练是否改善，可保留现有配置直接训练更久：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+
+test -f "$OPENPI_PALIGEMMA_TOKENIZER_PATH"
+uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
+
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_10kstep \
+  --batch-size 4 \
+  --num-workers 2 \
+  --max-train-steps 10000 \
+  --checkpoint-every 2500 \
+  --device cuda:1
+```
+
+注意：如果 PADP websocket server 仍在 cuda:1 上运行，先在 server 终端按 Ctrl-C 停掉，或者把训练改到其他 GPU，例如 `--device cuda:0`。否则 tokenizer 修好后，下一步可能遇到显存冲突。
+
+训练语义诊断命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+
+uv run python -m padp.training.diagnose_libero_semantics \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 4 \
+  --num-workers 0 \
+  --num-batches 4 \
+  --print-rows 3
+```
+
+评估侧 action/state 调试命令：
+
+```bash
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_1000step/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --debug-log-steps 5
+```
+
+但更推荐先完成 state/action 语义诊断，再决定是否继续用当前 normalizer 和 checkpoint 路线。
+
+建议先保留当前能跑通的链路 checkpoint，不要覆盖：
+
+```text
+checkpoints/padp_libero_va/train_1000step/last.pt
 ```
 
 ## 目标重新定义

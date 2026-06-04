@@ -38,6 +38,21 @@
 29. 已新增 src/padp/serving/serve_libero.py，复用 openpi.websocket server 协议，向 examples/libero/main.py 返回 {"actions": ...}。
 30. 已修改 examples/libero/main.py，新增 selected_task_ids，可先只评估单个 task。
 31. 当前服务端 state 适配保持和 LiberoPadpBatchAdapter 一致：state[0:3]、state[3:7]、state[7:8]。不要在第一版 service 中额外把 axis-angle 转 quaternion，否则会和已训练 checkpoint 的输入分布不一致。
+32. 服务器上已成功启动 PADP websocket server，监听 0.0.0.0:8000。
+33. LIBERO client 端报错 `examples/libero/.venv/bin/activate: 没有那个文件或目录` 和 `ModuleNotFoundError: imageio`，原因是 examples/libero 专用 Python 3.8 虚拟环境尚未创建；这不是 PADP server 问题。
+34. 已创建 examples/libero/.venv 后，最小 service/client 闭环已跑通：libero_object task 0、1 trial、replan_steps=1。
+35. 最小评估结果为 0/1 success。该结果说明当前 1000 step PADP-VA checkpoint 尚未形成可用成功率，但接口、仿真、websocket、action 返回链路已经打通。
+36. 末尾 `EGL_NOT_INITIALIZED` traceback 出现在 MuJoCo/EGL context 析构阶段，当前不影响本次评估结果读取；若频繁干扰日志，可尝试 `MUJOCO_GL=glx`。
+37. 当前 client 日志中的 assets/datasets path warning 暂不阻塞评估；但后续建议用干净 `PYTHONPATH` 启动 examples/libero client，避免继承其他 conda 环境中的 LIBERO 路径。
+38. 小批量稳定性评估已跑通：libero_object task 0/1/2，每个 task 2 个 trial，总 6 个 episode。
+39. 小批量评估结果为 0/6 success。该结果继续说明当前 1000 step checkpoint 只能证明链路，不代表可用策略。
+40. 小批量评估期间 websocket、仿真、action 返回和结果记录均未中断，说明 service/client 链路具备继续扩展评估的稳定性。
+41. 已检查 `data/libero/padp_results_small.json`：记录 6 个 episode，total_successes=0，success_rate=0.0。
+42. 已检查 `data/libero/padp_videos_small`：6 个 mp4 均已写出，说明视频保存链路正常。
+43. 10k 训练首次启动失败，原因是训练命令仍处在 `examples/libero/.venv` 客户端环境影响下，且未设置 `OPENPI_PALIGEMMA_TOKENIZER_PATH`，openpi loader 试图从 GCS 下载 `paligemma_tokenizer.model` 并报 FileNotFoundError。
+44. 该 10k 报错发生在第一个 batch 读取前，不是 PADP loss、backward、optimizer 或 checkpoint 保存问题。
+45. 已新增 `src/padp/training/diagnose_libero_semantics.py`，用于打印 openpi/PADP 训练 loader 中 state[:8]、actions[:7] 的统计和样例。
+46. 已给 `src/padp/serving/serve_libero.py` 新增 `--debug-log-steps`，用于记录评估侧前 N 次 observation/state 切片和 PADP action 输出。
 ```
 
 服务器 smoke 成功输出要点：
@@ -57,11 +72,11 @@ PADP LIBERO smoke loss ok
 下一步：
 
 ```text
-1. 在服务器启动 src/padp/serving/serve_libero.py。
-2. 用 examples/libero/main.py 先做 1 个 task、1 个 trial 的最小 service/client 闭环评估。
-3. 如果 action_chunk_size=1，则 client 也使用 replan_steps=1；如果要用默认 replan_steps=5，server 需要同步设置 action_chunk_size=5。
-4. 最小闭环通过后，再扩大到完整 LIBERO 评估。
-5. 和 pi05 在同一 task_suite、num_trials_per_task、seed 下对比成功率。
+1. 重新用干净训练环境启动 10k 训练：退出 examples/libero/.venv，激活 lerobot，设置 `OPENPI_PALIGEMMA_TOKENIZER_PATH`。
+2. 若 PADP server 还占用 cuda:1，先停止 server 或把训练切到其他 GPU，避免显存冲突。
+3. 同时运行 `diagnose_libero_semantics.py`，核对训练数据中的 `state[:8]`、`actions[:7]` 与评估侧 `observation/state`、`env.step(action)` 是否语义一致。
+4. 在语义核对前，不建议把完整 LIBERO 评估当作有效成功率对比。
+5. 真正和 pi05 对比前，需要固定 task_suite、selected_task_ids、num_trials_per_task、seed，并使用充分训练后的 PADP checkpoint。
 ```
 
 ## 当前结论

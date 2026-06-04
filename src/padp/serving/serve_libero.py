@@ -26,6 +26,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         checkpoint_path: Path,
         device: str,
         action_chunk_size: int,
+        debug_log_steps: int = 0,
     ) -> None:
         register_omegaconf_resolvers()
         cfg = OmegaConf.load(config_path)
@@ -58,6 +59,8 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         self._cfg = cfg
         self._policy = policy
         self._action_chunk_size = int(action_chunk_size)
+        self._debug_log_steps = int(debug_log_steps)
+        self._infer_count = 0
         self._metadata = {
             "policy": "padp_libero_va",
             "checkpoint_path": str(checkpoint_path),
@@ -81,6 +84,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         actions = output["action"][0].detach().cpu().numpy().astype(np.float32)
         if not np.isfinite(actions).all():
             raise RuntimeError("PADP predicted non-finite actions.")
+        self._maybe_log_debug(obs, obs_dict, actions)
         return {"actions": actions}
 
     def reset(self) -> None:
@@ -103,6 +107,22 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             "robot0_eef_quat": state[..., 3:7],
             "robot0_gripper_qpos": state[..., 7:8],
         }
+
+    def _maybe_log_debug(self, obs: dict, obs_dict: dict[str, torch.Tensor], actions: np.ndarray) -> None:
+        if self._infer_count >= self._debug_log_steps:
+            self._infer_count += 1
+            return
+
+        raw_state = np.asarray(obs["observation/state"], dtype=np.float32).reshape(-1)
+        logging.info("PADP debug infer %d", self._infer_count)
+        logging.info("raw observation/state[:8]: %s", _format_np(raw_state[:8]))
+        logging.info("split eef_pos: %s", _format_tensor(obs_dict["robot0_eef_pos"]))
+        logging.info("split state[3:7]: %s", _format_tensor(obs_dict["robot0_eef_quat"]))
+        logging.info("split gripper: %s", _format_tensor(obs_dict["robot0_gripper_qpos"]))
+        logging.info("pred actions shape: %s", actions.shape)
+        logging.info("pred action[0]: %s", _format_np(actions[0]))
+        logging.info("pred action min/max: %s / %s", _format_np(actions.min(axis=0)), _format_np(actions.max(axis=0)))
+        self._infer_count += 1
 
 
 def _image_to_padp_tensor(image: Any, *, device: torch.device) -> torch.Tensor:
@@ -130,6 +150,15 @@ def _state_to_tensor(state: Any, *, device: torch.device) -> torch.Tensor:
     return tensor.unsqueeze(0).unsqueeze(0)
 
 
+def _format_tensor(tensor: torch.Tensor) -> str:
+    return _format_np(tensor.detach().cpu().numpy().reshape(-1))
+
+
+def _format_np(array: np.ndarray, *, precision: int = 4) -> str:
+    values = np.asarray(array, dtype=np.float32).reshape(-1).tolist()
+    return "[" + ", ".join(f"{float(value):.{precision}f}" for value in values) + "]"
+
+
 def register_omegaconf_resolvers() -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
@@ -144,6 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--action-chunk-size", type=int, default=1)
+    parser.add_argument("--debug-log-steps", type=int, default=0)
     return parser.parse_args()
 
 
@@ -154,6 +184,7 @@ def main() -> None:
         checkpoint_path=args.checkpoint_path,
         device=args.device,
         action_chunk_size=args.action_chunk_size,
+        debug_log_steps=args.debug_log_steps,
     )
 
     hostname = socket.gethostname()
