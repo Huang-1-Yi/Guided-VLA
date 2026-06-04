@@ -21,6 +21,19 @@
 12. 已新增 src/padp/config/libero_va_train.yaml，作为不含 Hydra runtime 字段的 PADP-VA 训练配置。
 13. 已新增 src/padp/training/train_libero.py，参考 PADP 原训练循环实现最小 LIBERO smoke train。
 14. 原始 scripts/compute_norm_stats.py 只服务 openpi 训练，不能直接生成 PADP LinearNormalizer。
+15. 服务器上已生成 PADP normalizer：checkpoints/padp_libero_va/normalizer.pt。
+16. 服务器上已跑通 PADP LIBERO 10 step smoke train，并保存 checkpoint。
+17. 当前 smoke train 输出目录：checkpoints/padp_libero_va/train_smoke。
+18. 当前 checkpoint 包括 step_000010.pt 和 last.pt，只证明训练链路可运行，不代表策略成功率。
+19. 服务器上已跑通 PADP LIBERO 100 step 训练测试，num_workers=2 可用。
+20. 100 step 输出目录：checkpoints/padp_libero_va/train_100step。
+21. PyTorch 2.6 起 torch.load 默认 weights_only=True，读取包含旧 OmegaConf 对象的 smoke checkpoint 时可能报 ListConfig 安全加载错误；本地自训 checkpoint 检查可用 weights_only=False。
+22. 服务器上已跑通 PADP LIBERO 1000 step 小规模训练，loss 没有 NaN/Inf，并持续保存 checkpoint。
+23. 1000 step 输出目录：checkpoints/padp_libero_va/train_1000step。
+24. 1000 step checkpoint 包括 step_000250.pt、step_000500.pt、step_000750.pt、step_001000.pt 和 last.pt。
+25. PADP policy 已有 predict_action(obs_dict)，后续 serving 只需要做 LIBERO client observation 到 PADP obs_dict 的适配。
+26. 已确认 train_1000step/last.pt 可用 weights_only=False 正常读取，checkpoint keys 为 cfg、model、normalizer、optimizer、step，step=1000。
+27. 已新增 src/padp/training/smoke_libero_predict.py，用于加载 checkpoint 后做单批 predict_action 推理烟测。
 ```
 
 服务器 smoke 成功输出要点：
@@ -40,10 +53,10 @@ PADP LIBERO smoke loss ok
 下一步：
 
 ```text
-1. 在服务器运行 compute_norm_stats_for_padp.py，生成 checkpoints/padp_libero_va/normalizer.pt。
-2. 在服务器运行 train_libero.py，先做 10~100 step smoke train，确认 loss/backward/checkpoint 正常。
-3. 新增 src/padp/serving/serve_libero.py，让 PADP checkpoint 通过 websocket 输出 {"actions": ...}。
-4. 复用 examples/libero/main.py 评估 PADP-VA 成功率，并和 pi05 在同一数据源/环境下对比。
+1. 在服务器运行 src/padp/training/smoke_libero_predict.py，确认 predict_action 输出 action/action_pred shape 正常且没有 NaN/Inf。
+2. 新增 src/padp/serving/serve_libero.py，让 PADP checkpoint 通过 websocket 输出 {"actions": ...}。
+3. 复用 examples/libero/main.py 先做 1 个 task、1 个 trial 的最小评估，再扩大到完整 LIBERO 评估。
+4. 和 pi05 在同一 task_suite、num_trials_per_task、seed 下对比成功率。
 ```
 
 ## 当前结论

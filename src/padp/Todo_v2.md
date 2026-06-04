@@ -49,44 +49,12 @@ loss mean = 3.1426055431365967
 PADP LIBERO smoke loss ok
 ```
 
-当前不要再重复修 adapter。下一步进入正式训练准备：
+当前不要再重复修 adapter。normalizer 和最小训练链路也已经跑通：
 
 ```text
-1. src/padp/training/compute_norm_stats_for_padp.py 已新增
-   - 参考 scripts/compute_norm_stats.py 的数据遍历方式
-   - 保存 PADP 的 LinearNormalizer，不保存 openpi NormStats
-
-2. src/padp/config/libero_va_train.yaml 已新增
-   - 用于 standalone PyTorch smoke train
-   - 不包含 hydra.run / hydra.sweep / now resolver
-
-3. src/padp/training/train_libero.py 已新增
-   - 参考 PADP 原 train_padp_workspace_v3.py 的训练循环
-   - 使用 openpi LIBERO loader + PADP adapter
-   - 加载 PADP normalizer
-   - 保存 checkpoint
-
-4. 下一步写 src/padp/serving/serve_libero.py
-   - 加载 PADP checkpoint 和 normalizer
-   - 提供 websocket policy service
-   - 输出接口对齐 {"actions": action_chunk}
-
-5. 复用 examples/libero/main.py 做 LIBERO client 评估
-```
-
-`scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
-
-服务器下一步命令：
-
-```bash
-cd ~/Desktop/Guided-VLA
-conda activate lerobot
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-
 uv run python -m padp.training.compute_norm_stats_for_padp \
   --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
   --batch-size 8 \
-  --num-workers 0 \
   --num-batches 128 \
   --output-path checkpoints/padp_libero_va/normalizer.pt
 
@@ -99,6 +67,217 @@ uv run python -m padp.training.train_libero \
   --max-train-steps 10 \
   --checkpoint-every 10 \
   --device cuda:1
+```
+
+成功标志：
+
+```text
+Saved PADP normalizer to: checkpoints/padp_libero_va/normalizer.pt
+input stats keys: action, agentview_image, robot0_eef_pos, robot0_eef_quat, robot0_eye_in_hand_image, robot0_gripper_qpos
+step=000001 loss=1.909037
+step=000010 loss=2.254615
+Saved checkpoint: checkpoints/padp_libero_va/train_smoke/step_000010.pt
+Saved checkpoint: checkpoints/padp_libero_va/train_smoke/last.pt
+PADP LIBERO train finished
+```
+
+注意：这个 10 step checkpoint 只是功能烟测结果，只能说明 loader、adapter、normalizer、policy、loss、backward、optimizer、checkpoint 这一整条链路已经连通，不能作为成功率或收敛效果结论。
+
+100 step 训练测试也已经跑通：
+
+```text
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_100step \
+  --batch-size 4 \
+  --num-workers 2 \
+  --max-train-steps 100 \
+  --checkpoint-every 50 \
+  --device cuda:1
+```
+
+成功标志：
+
+```text
+step=000001 loss=1.858434
+step=000050 loss=0.603832
+Saved checkpoint: checkpoints/padp_libero_va/train_100step/step_000050.pt
+step=000100 loss=1.007593
+Saved checkpoint: checkpoints/padp_libero_va/train_100step/step_000100.pt
+Saved checkpoint: checkpoints/padp_libero_va/train_100step/last.pt
+PADP LIBERO train finished
+```
+
+当前已经确认 `num_workers=2` 在服务器上可用。后续训练可以继续优先用 `num_workers=2`；如果出现 dataloader 卡住、worker 异常或内存压力，再退回 `num_workers=0`。
+
+checkpoint 检查注意事项：PyTorch 2.6 以后 `torch.load` 默认 `weights_only=True`。旧 smoke checkpoint 里如果包含 OmegaConf 的 `ListConfig`，会触发安全加载错误。自训本地 checkpoint 可以用：
+
+```python
+torch.load(path, map_location="cpu", weights_only=False)
+```
+
+只对自己刚训练生成的 checkpoint 这样做，不要对不可信来源的 checkpoint 使用 `weights_only=False`。
+
+1000 step 小规模训练已经跑通：
+
+```text
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_1000step \
+  --batch-size 4 \
+  --num-workers 2 \
+  --max-train-steps 1000 \
+  --checkpoint-every 250 \
+  --device cuda:1
+```
+
+成功标志：
+
+```text
+step=000001 loss=1.858434
+step=000250 loss=0.573068
+Saved checkpoint: checkpoints/padp_libero_va/train_1000step/step_000250.pt
+step=000500 loss=0.206781
+Saved checkpoint: checkpoints/padp_libero_va/train_1000step/step_000500.pt
+step=000750 loss=0.107386
+Saved checkpoint: checkpoints/padp_libero_va/train_1000step/step_000750.pt
+step=001000 loss=0.061737
+Saved checkpoint: checkpoints/padp_libero_va/train_1000step/step_001000.pt
+Saved checkpoint: checkpoints/padp_libero_va/train_1000step/last.pt
+PADP LIBERO train finished
+```
+
+结论：当前 PADP-VA 的训练链路已经从 smoke loss 推进到可持续训练。现在不再优先改训练循环，下一阶段转向 checkpoint 推理和 service/client 评估。
+
+当前训练准备状态：
+
+```text
+1. src/padp/training/compute_norm_stats_for_padp.py 已新增
+   - 参考 scripts/compute_norm_stats.py 的数据遍历方式
+   - 保存 PADP 的 LinearNormalizer，不保存 openpi NormStats
+   - 服务器已跑通
+
+2. src/padp/config/libero_va_train.yaml 已新增
+   - 用于 standalone PyTorch smoke train
+   - 不包含 hydra.run / hydra.sweep / now resolver
+
+3. src/padp/training/train_libero.py 已新增
+   - 参考 PADP 原 train_padp_workspace_v3.py 的训练循环
+   - 使用 openpi LIBERO loader + PADP adapter
+   - 加载 PADP normalizer
+   - 保存 checkpoint
+   - 服务器已跑通 10 step smoke train
+
+4. 100 step 训练测试已完成
+   - num_workers=2 已验证可用
+   - checkpoint 已保存到 checkpoints/padp_libero_va/train_100step
+
+5. 1000 step 小规模训练已完成
+   - loss 没有 NaN/Inf
+   - checkpoint 已保存到 checkpoints/padp_libero_va/train_1000step
+   - num_workers=2 继续可用
+
+6. checkpoint 单批推理 smoke 脚本已新增
+   - 文件：src/padp/training/smoke_libero_predict.py
+   - 加载 train_1000step/last.pt
+   - 读取一批 LIBERO 数据
+   - 调用 policy.predict_action(obs_dict)
+   - 确认输出 action 形状为 (B,n_action_steps,7)
+   - 确认输出 action_pred 形状为 (B,horizon,7)
+
+7. 下一步在服务器运行 checkpoint 单批推理 smoke
+
+8. 再写 src/padp/serving/serve_libero.py
+   - 加载 PADP checkpoint 和 normalizer
+   - 提供 websocket policy service
+   - 输出接口对齐 {"actions": action_chunk}
+   - examples/libero/main.py 发来的字段是 observation/image、observation/wrist_image、observation/state、prompt
+   - PADP-VA 第一版忽略 prompt
+   - 需要把 observation/state 中的 axis-angle 旋转转回 PADP 训练使用的 quaternion 格式
+
+9. 复用 examples/libero/main.py 做 LIBERO client 评估
+   - 先运行 1 个 task、1 个 trial 的最小评估
+   - 再扩大到完整 task suite
+```
+
+`scripts/compute_norm_stats.py` 可以作为参考，但它生成的是 openpi 的 norm_stats。PADP 需要单独的 `src/padp/training/compute_norm_stats_for_padp.py`，用于保存 `padp.model.common.normalizer.LinearNormalizer`。
+
+服务器已确认 1000 step checkpoint 可读：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+uv run python - <<'PY'
+import torch
+
+path = "checkpoints/padp_libero_va/train_1000step/last.pt"
+ckpt = torch.load(path, map_location="cpu", weights_only=False)
+print("loaded:", path)
+print("keys:", sorted(ckpt.keys()))
+print("step:", ckpt.get("step"))
+PY
+```
+
+已新增单批推理 smoke 脚本：
+
+```text
+src/padp/training/smoke_libero_predict.py
+```
+
+脚本目标：
+
+```text
+1. 加载 src/padp/config/libero_va_train.yaml。
+2. 加载 checkpoints/padp_libero_va/train_1000step/last.pt。
+3. hydra.utils.instantiate(cfg.policy)。
+4. policy.load_state_dict(ckpt["model"])。
+5. normalizer.load_state_dict(ckpt["normalizer"]) 并 policy.set_normalizer(normalizer)。
+6. 从 OpenPiLiberoPadpDataset 读取一个 batch。
+7. 调用 policy.predict_action(batch["obs"])。
+8. 打印 action 和 action_pred 的 shape、dtype、min/max。
+```
+
+通过标准：
+
+```text
+action shape = (B,n_action_steps,7)
+action_pred shape = (B,horizon,7)
+没有 NaN/Inf
+```
+
+服务器下一步命令。运行 checkpoint 单批推理 smoke：
+
+```bash
+cd ~/Desktop/Guided-VLA
+conda activate lerobot
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+uv run python -m padp.training.smoke_libero_predict \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_1000step/last.pt \
+  --batch-size 2 \
+  --num-workers 0 \
+  --device cuda:1
+```
+
+预期输出要点：
+
+```text
+checkpoint step: 1000
+PADP obs keys: ...
+output[action]: shape=(2,1,7)
+output[action_pred]: shape=(2,40,7)
+PADP LIBERO smoke predict ok
+```
+
+checkpoint 单批推理通过后，再进入 websocket service：
+
+```text
+src/padp/serving/serve_libero.py
 ```
 
 ## 目标重新定义
