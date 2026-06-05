@@ -2180,3 +2180,31 @@ uv run python -m padp.training.train_libero \
 ```
 
 如果 batch_size=256 在 PADP 上 OOM，不要把它视为数据或接口错误。pi05 的 batch_size=256 是 VLA 训练配置口径，PADP 当前是单卡 PyTorch diffusion policy，显存曲线不同。下一步应增加 gradient accumulation，用较小 micro batch 近似 effective batch size=256。
+
+诊断执行结果：
+
+```text
+batch_size=256
+num_workers=32
+num_batches=4
+OpenPI state shape = (256, 32)
+OpenPI actions shape = (256, 50, 32)
+PADP action shape = (256, 40, 7)
+PADP LIBERO semantics diagnostic finished
+```
+
+结论：
+
+```text
+pi05 风格 batch_size=256 的 LIBERO 数据读取已经跑通。
+PADP adapter 在 batch_size=256 下可以正常转换数据。
+下一步可以进入 backward-only 训练显存测试。
+```
+
+warning 处理：
+
+```text
+worker 启动时会 import moviepy / pygame / ml_collections 等第三方库，因此 warning 可能按 worker 数重复出现。
+这不是每个 batch 的训练输出，也不是 PADP 逻辑错误。
+`diagnose_libero_semantics.py` 已加入 warning 过滤和紧凑图像统计，后续诊断输出会更干净。
+```

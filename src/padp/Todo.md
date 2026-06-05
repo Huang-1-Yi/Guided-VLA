@@ -799,3 +799,40 @@ uv run python -m padp.training.train_libero \
 ```
 
 如果第二步或第三步 OOM，说明 pi05 的 batch_size=256 不适合当前 PADP 单卡显存。此时不要改 state/action 语义，下一步应给 `train_libero.py` 增加 gradient accumulation，用较小 micro batch 模拟 effective batch size=256。
+
+诊断已通过，成功标志：
+
+```text
+=== OpenPI batch shapes ===
+state: (256, 32)
+actions: (256, 50, 32)
+=== Adapted PADP batch ===
+batch[action]: shape=(256, 40, 7)
+PADP LIBERO semantics diagnostic finished
+```
+
+诊断结论：
+
+```text
+batch_size=256、num_workers=32 的数据读取和 PADP adapter 可以跑通。
+当前 PADP adapter 的 state/action 切片仍与训练和 service 保持一致。
+state[3:7] 当前只是沿用 OpenPI state slice，名字叫 robot0_eef_quat，但不要在已有 checkpoint 上临时改语义。
+```
+
+warning 说明：
+
+```text
+moviepy / pygame / ml_collections warning 主要来自每个 DataLoader worker 启动时 import 第三方库。
+它们不是每个 batch 都必然打印；但每次重新创建 DataLoader worker 时会再打印。
+ALSA warning 来自音频后端探测，不影响 LIBERO 数据诊断。
+```
+
+已进一步优化：
+
+```text
+src/padp/training/diagnose_libero_semantics.py
+  - 忽略第三方 SyntaxWarning 和 pkg_resources deprecation UserWarning。
+  - 设置 PYGAME_HIDE_SUPPORT_PROMPT=1。
+  - 设置 SDL_AUDIODRIVER=dummy。
+  - 图像 tensor 统计改为紧凑的 scalar min/max/mean/std，避免打印超长向量。
+```

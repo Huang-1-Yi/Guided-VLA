@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
+import warnings
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"moviepy\..*")
+warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"ml_collections\..*")
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API.*", category=UserWarning, module=r"pygame\..*")
 
 from omegaconf import OmegaConf
 import torch
@@ -130,6 +138,12 @@ def apply_overrides(cfg: Any, args: argparse.Namespace) -> None:
 
 def print_stats(name: str, tensor: torch.Tensor) -> None:
     tensor = torch.as_tensor(tensor).detach().cpu().float()
+    if tensor.ndim >= 4:
+        print(
+            f"{name}: shape={tuple(tensor.shape)} min={float(tensor.min()):.4f} "
+            f"max={float(tensor.max()):.4f} mean={float(tensor.mean()):.4f} std={float(tensor.std()):.4f}"
+        )
+        return
     flat = tensor.reshape(-1, tensor.shape[-1])
     print(
         f"{name}: shape={tuple(tensor.shape)} min={format_vector(flat.min(dim=0).values)} "
