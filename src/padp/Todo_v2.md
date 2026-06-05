@@ -2208,3 +2208,316 @@ worker 启动时会 import moviepy / pygame / ml_collections 等第三方库，�
 这不是每个 batch 的训练输出，也不是 PADP 逻辑错误。
 `diagnose_libero_semantics.py` 已加入 warning 过滤和紧凑图像统计，后续诊断输出会更干净。
 ```
+
+backward-only 显存测试执行结果：
+
+```text
+batch_size=256
+num_workers=32
+device=cuda:1
+num_batches=1
+backward-only smoke ok, step=0, loss=1.976599931716919
+```
+
+结论：
+
+```text
+pi05 风格 batch_size=256 在当前 PADP-VA 单卡训练中至少可以完成一次 forward/backward。
+下一步进入 100 step 短训练测试。
+```
+
+短训练命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+export DATALOADER_PREFETCH_FACTOR=1
+export SDL_AUDIODRIVER=dummy
+ulimit -n 65535 || true
+
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_100step \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 100 \
+  --checkpoint-every 50 \
+  --device cuda:1
+```
+
+注意：
+
+```text
+100 step 的目标是验证 batch_size=256 的持续训练稳定性和 checkpoint 保存，不用于评估成功率。
+如果 100 step 稳定，再进入 10k 或 30k。
+正式长期训练前，建议再用 batch_size=256 重新计算更充分的 PADP normalizer。
+```
+
+100 step 短训练执行结果：
+
+```text
+batch_size=256
+num_workers=32
+device=cuda:1
+num_batches=100
+step=000001 loss=1.976600
+step=000050 loss=0.384287
+step=000100 loss=0.156336
+checkpoint step=100
+```
+
+结论：
+
+```text
+pi05 风格 batch_size=256 的 PADP-VA 持续训练测试已通过。
+loss 没有 NaN/Inf，checkpoint 保存和读取正常。
+可以进入长训练前准备。
+```
+
+长训练前先做 full-ish PADP normalizer：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+export DATALOADER_PREFETCH_FACTOR=1
+export SDL_AUDIODRIVER=dummy
+ulimit -n 65535 || true
+
+uv run python -m padp.training.compute_norm_stats_for_padp \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1068 \
+  --output-path checkpoints/padp_libero_va/normalizer_pi05_batch_full.pt
+```
+
+然后先跑 10k：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer_pi05_batch_full.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_10kstep \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 10000 \
+  --checkpoint-every 2500 \
+  --device cuda:1
+```
+
+暂不建议直接 30k 的原因：
+
+```text
+10k 可以先验证长时间 DataLoader、checkpoint、loss 曲线和 small eval 是否稳定。
+如果 10k 已经无法改善 0/6 small eval，再直接 30k 可能只是浪费时间。
+如果 10k 链路稳定且初步成功率有改善，再扩到 pi05 的 30000 steps 更合理。
+```
+
+10k 训练执行结果：
+
+```text
+batch_size=256
+num_workers=32
+num_batches=10000
+device=cuda:1
+
+step=000001 loss=1.747137
+step=002500 loss=0.022580
+step=005000 loss=0.020152
+step=007500 loss=0.016854
+step=010000 loss=0.015840
+checkpoint: checkpoints/padp_libero_va/train_pi05_batch_10kstep/last.pt
+```
+
+结论：
+
+```text
+10k 训练已跑通。
+loss 曲线是下降并趋稳，不是异常偏大。
+```
+
+重要备注：
+
+```text
+预期的 1068-batch full normalizer 没有实际保存成功。
+train_libero 检测到 normalizer_pi05_batch_full.pt 不存在后，自动 fallback 到 128 batches fit normalizer。
+因此本次 10k checkpoint 使用的是 128-batch auto-fit normalizer。
+```
+
+当前优先级：
+
+```text
+1. 先验证 10k checkpoint 可读。
+2. 跑 smoke_libero_predict，确认 predict_action 正常。
+3. 启动 serve_libero.py 做 LIBERO small eval。
+4. 根据 small eval 决定是继续 30k，还是先修正 normalizer / state-action 语义。
+```
+
+10k checkpoint 推理 smoke 结果：
+
+```text
+checkpoint step = 10000
+output[action] shape = (2, 1, 7)
+output[action_pred] shape = (2, 40, 7)
+action range roughly = [-2.87, 1.90]
+PADP LIBERO smoke predict ok
+```
+
+结论：
+
+```text
+10k checkpoint 的单批推理链路正常。
+现在可以进入 service/client 评估，但先做 small eval，不直接做完整 suite。
+```
+
+下一步：10k small eval。
+
+终端 1：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --debug-log-steps 5
+```
+
+终端 2：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_small \
+  --args.results-json-path data/libero/padp_results_10k_small.json
+```
+
+判断标准：
+
+```text
+如果 10k small eval > 0/6，说明训练步数确实开始带来行为改善，可以继续扩大 trial 或训练到 30k。
+如果仍是 0/6，优先看视频和 server debug log，检查 action 是否方向/尺度/语义不匹配，而不是直接盲目 30k。
+```
+
+10k small eval 结果：
+
+```text
+task_suite = libero_object
+selected_task_ids = [0, 1, 2]
+num_trials_per_task = 2
+total_episodes = 6
+total_successes = 0
+success_rate = 0.0
+```
+
+根因候选更新：
+
+```text
+最优先怀疑 action 空间转换，而不是训练步数。
+```
+
+原因：
+
+```text
+`pi0_libero_object` 使用 `LeRobotLiberoDataConfig(extra_delta_transform=True)`。
+训练输入侧会执行 `DeltaActions(make_bool_mask(6, -1))`：
+  actions[..., :6] -= state[..., :6]
+这意味着 PADP 当前学到的是前 6 维 delta action。
+
+LIBERO env.step(action) 需要的动作与 openpi 输出侧一致。
+openpi 的输出侧会通过 `AbsoluteActions(make_bool_mask(6, -1))`：
+  actions[..., :6] += state[..., :6]
+
+此前 PADP server 少了这一步，直接把 delta action 返回给 env.step，可能导致 0/6。
+```
+
+已修复：
+
+```text
+src/padp/serving/serve_libero.py
+  - 新增 `--output-action-space {absolute,delta}`
+  - 默认 `absolute`
+  - `absolute` 模式下对前 6 维执行 delta -> absolute 转换
+  - 第 7 维 gripper 不加 state
+```
+
+下一步重新评估，不要继续训练：
+
+终端 1：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --debug-log-steps 5
+```
+
+终端 2：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_small_abs \
+  --args.results-json-path data/libero/padp_results_10k_small_abs.json
+```
+
+对比：
+
+```text
+旧结果：padp_results_10k_small.json = 0/6，使用 raw delta action。
+新结果：padp_results_10k_small_abs.json，使用 absolute action。
+```

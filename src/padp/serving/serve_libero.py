@@ -26,6 +26,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         checkpoint_path: Path,
         device: str,
         action_chunk_size: int,
+        output_action_space: str = "absolute",
         debug_log_steps: int = 0,
     ) -> None:
         register_omegaconf_resolvers()
@@ -59,6 +60,9 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         self._cfg = cfg
         self._policy = policy
         self._action_chunk_size = int(action_chunk_size)
+        if output_action_space not in {"absolute", "delta"}:
+            raise ValueError(f"output_action_space must be 'absolute' or 'delta', got {output_action_space!r}")
+        self._output_action_space = output_action_space
         self._debug_log_steps = int(debug_log_steps)
         self._infer_count = 0
         self._metadata = {
@@ -67,6 +71,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             "checkpoint_step": int(ckpt.get("step", -1)),
             "action_dim": int(cfg.shape_meta.action.shape[0]),
             "action_chunk_size": self._action_chunk_size,
+            "output_action_space": self._output_action_space,
             "horizon": horizon,
             "n_obs_steps": int(cfg.n_obs_steps),
             "notes": "PADP-VA ignores prompt and reuses the current openpi LIBERO state slicing.",
@@ -82,6 +87,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             output = self._policy.predict_action(obs_dict)
 
         actions = output["action"][0].detach().cpu().numpy().astype(np.float32)
+        actions = self._to_env_actions(obs, actions)
         if not np.isfinite(actions).all():
             raise RuntimeError("PADP predicted non-finite actions.")
         self._maybe_log_debug(obs, obs_dict, actions)
@@ -108,6 +114,18 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             "robot0_gripper_qpos": state[..., 7:8],
         }
 
+    def _to_env_actions(self, obs: dict, actions: np.ndarray) -> np.ndarray:
+        if self._output_action_space == "delta":
+            return actions
+
+        raw_state = np.asarray(obs["observation/state"], dtype=np.float32).reshape(-1)
+        if raw_state.shape[0] < 6:
+            raise ValueError(f"Expected observation/state dim >= 6 for absolute action conversion, got {raw_state.shape}")
+
+        env_actions = np.array(actions, dtype=np.float32, copy=True)
+        env_actions[..., :6] += raw_state[:6]
+        return env_actions
+
     def _maybe_log_debug(self, obs: dict, obs_dict: dict[str, torch.Tensor], actions: np.ndarray) -> None:
         if self._infer_count >= self._debug_log_steps:
             self._infer_count += 1
@@ -120,6 +138,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         logging.info("split state[3:7]: %s", _format_tensor(obs_dict["robot0_eef_quat"]))
         logging.info("split gripper: %s", _format_tensor(obs_dict["robot0_gripper_qpos"]))
         logging.info("pred actions shape: %s", actions.shape)
+        logging.info("output action space: %s", self._output_action_space)
         logging.info("pred action[0]: %s", _format_np(actions[0]))
         logging.info("pred action min/max: %s / %s", _format_np(actions.min(axis=0)), _format_np(actions.max(axis=0)))
         self._infer_count += 1
@@ -173,6 +192,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--action-chunk-size", type=int, default=1)
+    parser.add_argument("--output-action-space", choices=("absolute", "delta"), default="absolute")
     parser.add_argument("--debug-log-steps", type=int, default=0)
     return parser.parse_args()
 
@@ -184,6 +204,7 @@ def main() -> None:
         checkpoint_path=args.checkpoint_path,
         device=args.device,
         action_chunk_size=args.action_chunk_size,
+        output_action_space=args.output_action_space,
         debug_log_steps=args.debug_log_steps,
     )
 
