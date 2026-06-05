@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--num-batches", type=int, default=128)
+    parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--split", default="train")
     parser.add_argument("--seed", type=int, default=None)
     return parser.parse_args()
@@ -50,8 +51,8 @@ def main() -> None:
         state_dim=8,
     )
 
-    print(f"Fitting PADP normalizer from {args.num_batches} batches...")
-    normalizer = dataset.get_normalizer(num_batches=args.num_batches)
+    print(f"Fitting PADP normalizer from {args.num_batches} batches...", flush=True)
+    normalizer = dataset.get_normalizer(num_batches=args.num_batches, log_every=args.log_every)
     metadata = {
         "config_path": str(args.config_path),
         "openpi_config": str(cfg.openpi_config),

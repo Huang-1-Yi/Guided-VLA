@@ -2521,3 +2521,165 @@ MUJOCO_GL=egl python examples/libero/main.py \
 旧结果：padp_results_10k_small.json = 0/6，使用 raw delta action。
 新结果：padp_results_10k_small_abs.json，使用 absolute action。
 ```
+
+## 2026-06-05：当前优先路线改为 full normalizer 重跑
+
+当前不是继续直接扩大评估，也不是马上训练 30k。优先怀疑点是上一轮 10k 训练没有真正使用 full normalizer。
+
+已确认：
+
+```text
+1. 10k 训练链路是通的。
+2. checkpoint 可读，step=10000。
+3. smoke_libero_predict 正常。
+4. service/client small eval 能跑完。
+5. raw delta small eval = 0/6。
+6. absolute action small eval = 0/6。
+7. 但这轮 10k 实际使用的是 128-batch fallback normalizer，不是预期的 1068-batch normalizer。
+```
+
+根因：
+
+```text
+旧版 fit_padp_normalizer 会把所有 batch 连同图像一起缓存到内存里。
+batch_size=256、num_batches=1068 时，图像缓存量极大，full normalizer 很容易失败或被系统杀掉。
+```
+
+已修正：
+
+```text
+src/padp/data/openpi_libero_loader.py
+  - fit_padp_normalizer 改成 streaming 统计。
+  - 图像不缓存，只登记 image key 并使用 get_image_range_normalizer()。
+  - action 和低维 obs 逐 batch 累计 min/max/sum/sumsq/count。
+
+src/padp/training/compute_norm_stats_for_padp.py
+  - 新增 --log-every，便于观察 1068 batch 统计进度。
+```
+
+下一步服务器执行顺序：
+
+```bash
+cd ~/Desktop/Guided-VLA
+git pull
+
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+export DATALOADER_PREFETCH_FACTOR=1
+export SDL_AUDIODRIVER=dummy
+ulimit -n 65535 || true
+```
+
+1. 重新生成 full normalizer：
+
+```bash
+uv run python -m padp.training.compute_norm_stats_for_padp \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1068 \
+  --log-every 50 \
+  --output-path checkpoints/padp_libero_va/normalizer_pi05_batch_stream_1068.pt
+```
+
+2. 检查 normalizer 已保存：
+
+```bash
+uv run python - <<'PY'
+import torch
+
+path = "checkpoints/padp_libero_va/normalizer_pi05_batch_stream_1068.pt"
+payload = torch.load(path, map_location="cpu", weights_only=False)
+print("loaded:", path)
+print("keys:", sorted(payload.keys()))
+print("metadata:", payload.get("metadata", {}))
+PY
+```
+
+3. 使用 full normalizer 重跑 10k：
+
+```bash
+uv run python -m padp.training.train_libero \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --normalizer-path checkpoints/padp_libero_va/normalizer_pi05_batch_stream_1068.pt \
+  --output-dir checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 10000 \
+  --checkpoint-every 2500 \
+  --device cuda:1 \
+  --no-fit-normalizer-if-missing
+```
+
+这里 `--no-fit-normalizer-if-missing` 很重要。如果 normalizer 文件不存在，应直接失败，而不是再次退回 128-batch fallback。
+
+4. 训练后检查 checkpoint 和 predict：
+
+```bash
+uv run python - <<'PY'
+import torch
+
+path = "checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt"
+ckpt = torch.load(path, map_location="cpu", weights_only=False)
+print("loaded:", path)
+print("keys:", sorted(ckpt.keys()))
+print("step:", ckpt.get("step"))
+PY
+
+uv run python -m padp.training.smoke_libero_predict \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --batch-size 2 \
+  --num-workers 0 \
+  --device cuda:1
+```
+
+5. 再做 small eval：
+
+server：
+
+```bash
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --debug-log-steps 5
+```
+
+client：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs.json
+```
+
+判断：
+
+```text
+如果 fullnorm small eval > 0/6：
+  说明 normalizer 质量确实影响明显，可继续训练到 30k 或扩大评估。
+
+如果 fullnorm small eval 仍然 0/6：
+  不再优先怀疑 normalizer。
+  下一步看视频和 server debug log，重点排查 state/action 语义、任务条件缺失、以及 PADP-VA 在多任务 LIBERO object 上是否需要 task/language condition。
+```

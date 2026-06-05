@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
@@ -86,8 +87,8 @@ class OpenPiLiberoPadpDataset(IterableDataset):
         for openpi_batch in loader:
             yield self.adapter(openpi_batch)
 
-    def get_normalizer(self, num_batches: int = 8) -> LinearNormalizer:
-        return fit_padp_normalizer(iter(self), num_batches=num_batches)
+    def get_normalizer(self, num_batches: int = 8, log_every: int | None = 100) -> LinearNormalizer:
+        return fit_padp_normalizer(iter(self), num_batches=num_batches, log_every=log_every)
 
 
 def create_openpi_libero_loader(config: OpenPiLiberoLoaderConfig):
@@ -145,47 +146,117 @@ def fit_padp_normalizer(
     batches: Iterator[dict[str, Any]],
     *,
     num_batches: int = 8,
+    log_every: int | None = 100,
 ) -> LinearNormalizer:
-    chunks: list[dict[str, Any]] = []
+    obs_accumulators: dict[str, StreamingFeatureStats] = {}
+    image_keys: set[str] = set()
+    action_accumulator: StreamingFeatureStats | None = None
+    consumed_batches = 0
+
     for idx, batch in enumerate(batches):
-        chunks.append(batch)
+        consumed_batches = idx + 1
+        action = batch["action"].detach().cpu()
+        action_accumulator = update_streaming_stats(action_accumulator, action, last_dim=1)
+
+        for key, value in batch["obs"].items():
+            if key.endswith("image"):
+                image_keys.add(key)
+                continue
+            obs_accumulators[key] = update_streaming_stats(
+                obs_accumulators.get(key),
+                value.detach().cpu(),
+                last_dim=1,
+            )
+
+        if log_every is not None and log_every > 0 and (idx + 1 == 1 or (idx + 1) % log_every == 0):
+            print(f"  normalizer batches: {idx + 1}/{num_batches}", flush=True)
+
         if idx + 1 >= num_batches:
             break
-    if not chunks:
+
+    if action_accumulator is None:
         raise RuntimeError("Cannot fit PADP normalizer from an empty iterator.")
 
-    obs_chunks = {key: [] for key in chunks[0]["obs"]}
-    action_chunks = []
-    for batch in chunks:
-        for key, value in batch["obs"].items():
-            obs_chunks[key].append(value.detach().cpu())
-        action_chunks.append(batch["action"].detach().cpu())
+    if consumed_batches < num_batches:
+        print(
+            f"  normalizer iterator ended after {consumed_batches} batches; requested {num_batches}.",
+            flush=True,
+        )
 
     normalizer = LinearNormalizer()
-    normalizer["action"] = get_range_normalizer_from_stat(
-        tensor_to_stat(torch.cat(action_chunks, dim=0), last_dim=1),
-    )
+    normalizer["action"] = get_range_normalizer_from_stat(action_accumulator.to_stat())
 
-    for key, values in obs_chunks.items():
-        tensor = torch.cat(values, dim=0)
-        if key.endswith("image"):
-            normalizer[key] = get_image_range_normalizer()
-        elif key.endswith("quat"):
-            normalizer[key] = get_identity_normalizer_from_stat(tensor_to_stat(tensor, last_dim=1))
+    for key in sorted(image_keys):
+        normalizer[key] = get_image_range_normalizer()
+
+    for key, accumulator in sorted(obs_accumulators.items()):
+        if key.endswith("quat"):
+            normalizer[key] = get_identity_normalizer_from_stat(accumulator.to_stat())
         else:
-            normalizer[key] = get_range_normalizer_from_stat(tensor_to_stat(tensor, last_dim=1))
+            normalizer[key] = get_range_normalizer_from_stat(accumulator.to_stat())
 
     return normalizer
 
 
-def tensor_to_stat(tensor: torch.Tensor, *, last_dim: int) -> dict[str, Any]:
+@dataclass
+class StreamingFeatureStats:
+    count: int
+    min: torch.Tensor
+    max: torch.Tensor
+    sum: torch.Tensor
+    sumsq: torch.Tensor
+
+    def update(self, flat: torch.Tensor) -> "StreamingFeatureStats":
+        flat = flat.to(dtype=torch.float64)
+        self.count += int(flat.shape[0])
+        self.min = torch.minimum(self.min, flat.min(dim=0).values)
+        self.max = torch.maximum(self.max, flat.max(dim=0).values)
+        self.sum += flat.sum(dim=0)
+        self.sumsq += (flat * flat).sum(dim=0)
+        return self
+
+    def to_stat(self) -> dict[str, np.ndarray]:
+        mean = self.sum / self.count
+        var = torch.clamp(self.sumsq / self.count - mean * mean, min=0.0)
+        std = torch.sqrt(var)
+        return {
+            "min": self.min.numpy().astype(np.float32),
+            "max": self.max.numpy().astype(np.float32),
+            "mean": mean.numpy().astype(np.float32),
+            "std": std.numpy().astype(np.float32),
+        }
+
+
+def update_streaming_stats(
+    accumulator: StreamingFeatureStats | None,
+    tensor: torch.Tensor,
+    *,
+    last_dim: int,
+) -> StreamingFeatureStats:
+    flat = flatten_feature(tensor, last_dim=last_dim).to(dtype=torch.float64)
+    if accumulator is None:
+        return StreamingFeatureStats(
+            count=int(flat.shape[0]),
+            min=flat.min(dim=0).values,
+            max=flat.max(dim=0).values,
+            sum=flat.sum(dim=0),
+            sumsq=(flat * flat).sum(dim=0),
+        )
+    return accumulator.update(flat)
+
+
+def flatten_feature(tensor: torch.Tensor, *, last_dim: int) -> torch.Tensor:
     if last_dim <= 0:
-        flat = tensor.reshape(-1, 1)
-    else:
-        feature_dim = 1
-        for size in tensor.shape[-last_dim:]:
-            feature_dim *= int(size)
-        flat = tensor.reshape(-1, feature_dim)
+        return tensor.reshape(-1, 1)
+
+    feature_dim = 1
+    for size in tensor.shape[-last_dim:]:
+        feature_dim *= int(size)
+    return tensor.reshape(-1, feature_dim)
+
+
+def tensor_to_stat(tensor: torch.Tensor, *, last_dim: int) -> dict[str, Any]:
+    flat = flatten_feature(tensor, last_dim=last_dim)
     return array_to_stats(flat.numpy())
 
 
