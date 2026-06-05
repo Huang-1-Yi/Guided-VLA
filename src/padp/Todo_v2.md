@@ -2683,3 +2683,113 @@ MUJOCO_GL=egl python examples/libero/main.py \
   不再优先怀疑 normalizer。
   下一步看视频和 server debug log，重点排查 state/action 语义、任务条件缺失、以及 PADP-VA 在多任务 LIBERO object 上是否需要 task/language condition。
 ```
+
+## 2026-06-05：full normalizer 10k 已完成，下一步先测试而不是先补全训练框架
+
+本轮训练输出已确认：
+
+```text
+normalizer: checkpoints/padp_libero_va/normalizer_pi05_batch_stream_1068.pt
+checkpoint: checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt
+step: 10000
+loss: 1.747026 -> 0.015536
+smoke_libero_predict: 通过
+output[action]: (2, 1, 7)
+output[action_pred]: (2, 40, 7)
+无 NaN/Inf
+```
+
+当前判断：
+
+```text
+先测试 small eval，不要先补全 val/rollout。
+```
+
+原因：
+
+```text
+1. 训练链路已经稳定，loss 正常下降。
+2. checkpoint 可加载，predict_action 已通过单批推理 smoke。
+3. 当前最关键的问题不是训练代码是否完整，而是 full normalizer + absolute action 后真实 LIBERO rollout 是否仍然 0/6。
+4. val loss 只能说明离线 imitation loss，不能替代仿真成功率。
+5. 如果 small eval 仍然 0/6，再补 val/diagnostics 才能更有针对性。
+```
+
+下一步执行 small eval。
+
+终端 1：启动 PADP server。
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --debug-log-steps 10
+```
+
+终端 2：启动 LIBERO client small eval。
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs.json
+```
+
+测试后检查：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+python -m json.tool data/libero/padp_results_10k_fullnorm_abs.json
+ls -lh data/libero/padp_videos_10k_fullnorm_abs
+```
+
+根据结果决策：
+
+```text
+如果 > 0/6：
+  说明 full normalizer 和 absolute action 路线有效。下一步可以扩大 trial 或训练到 30k。
+
+如果仍然 0/6：
+  不再优先怀疑 normalizer。下一步先看视频和 server debug log，再补离线 val / state-action 诊断。
+
+如果动作明显发散、方向错误或几乎不动：
+  优先排查 state/action 语义、delta->absolute、gripper 语义。
+
+如果动作合理但任务对象错误：
+  优先怀疑 PADP-VA 无 task/language condition，不适合直接混训多任务 LIBERO object。
+```
+
+暂缓补全项：
+
+```text
+1. 训练中 val loss。
+2. 训练中 rollout eval。
+3. top-k checkpoint。
+4. 自动 service/client eval。
+```
+
+这些应在 small eval 结果出来后再做。当前不要先补工程框架，否则可能在真正问题尚未定位前增加复杂度。

@@ -1309,3 +1309,86 @@ MUJOCO_GL=egl python examples/libero/main.py \
 2. 对比 server debug log 中的 state[:8]、delta action、absolute action。
 3. 检查 PADP-VA 无语言条件时，多任务 LIBERO object 是否需要按 task 单独训练或加入 task/language 条件。
 ```
+
+## 2026-06-05：full normalizer 10k 训练后决策
+
+训练输出显示：
+
+```text
+train_pi05_batch_10kstep_fullnorm 已完成 10000 steps。
+loss 从约 1.747 降到约 0.0155。
+checkpoint 已保存到 checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt。
+smoke_libero_predict 已通过，action/action_pred shape 正常，无 NaN/Inf。
+```
+
+当前决策：
+
+```text
+先做 LIBERO small eval。
+不要先补全训练中的 val / rollout。
+```
+
+理由：
+
+```text
+当前训练和单批推理已经足够进入真实仿真测试。
+val loss 只能验证离线拟合，不能回答 LIBERO rollout 成功率是否改善。
+如果 small eval 仍为 0/6，再根据视频和 debug log 决定补哪类诊断。
+```
+
+下一步命令：
+
+server：
+
+```bash
+cd ~/Desktop/Guided-VLA
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --debug-log-steps 10
+```
+
+client：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs.json
+```
+
+结果检查：
+
+```bash
+python -m json.tool data/libero/padp_results_10k_fullnorm_abs.json
+ls -lh data/libero/padp_videos_10k_fullnorm_abs
+```
+
+后续判断：
+
+```text
+> 0/6：继续扩大评估或训练到 30k。
+= 0/6：先看视频和 server debug log，再决定补 val loss、state/action 诊断或 task/language condition。
+```
