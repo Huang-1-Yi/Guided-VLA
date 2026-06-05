@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +91,7 @@ class OpenPiLiberoPadpDataset(IterableDataset):
 
 
 def create_openpi_libero_loader(config: OpenPiLiberoLoaderConfig):
+    configure_torch_dataloader_runtime(config.num_workers)
     train_config = make_openpi_train_config(config)
     return openpi_data_loader.create_data_loader(
         train_config,
@@ -99,6 +101,17 @@ def create_openpi_libero_loader(config: OpenPiLiberoLoaderConfig):
         num_batches=config.num_batches,
         skip_norm_stats=config.skip_norm_stats,
     )
+
+
+def configure_torch_dataloader_runtime(num_workers: int) -> None:
+    if num_workers <= 0:
+        return
+
+    # Many large torch tensors are passed from workers to the parent process.
+    # The default "file_descriptor" strategy can exhaust low ulimit -n values
+    # when num_workers is high, especially with LIBERO image batches.
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    os.environ.setdefault("DATALOADER_PREFETCH_FACTOR", "1")
 
 
 def make_openpi_train_config(config: OpenPiLiberoLoaderConfig):

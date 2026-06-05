@@ -737,6 +737,27 @@ test -f "$OPENPI_PALIGEMMA_TOKENIZER_PATH"
 uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
 ```
 
+如果使用 `--num-workers 32`，先提高当前 shell 的文件句柄上限，并降低 DataLoader 预取：
+
+```bash
+ulimit -n
+ulimit -n 65535 || true
+export DATALOADER_PREFETCH_FACTOR=1
+```
+
+说明：首次按 `--num-workers 32` 诊断时曾出现：
+
+```text
+OSError: [Errno 24] Too many open files
+```
+
+这不是 PADP 语义错误，而是 PyTorch 多 worker 传输大图像 tensor 时文件句柄不足。已在 `src/padp/data/openpi_libero_loader.py` 中加入运行时保护：
+
+```text
+torch.multiprocessing.set_sharing_strategy("file_system")
+DATALOADER_PREFETCH_FACTOR 默认设为 1
+```
+
 第一步，诊断训练数据语义：
 
 ```bash

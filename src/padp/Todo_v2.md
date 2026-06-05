@@ -2092,6 +2092,30 @@ test -f "$OPENPI_PALIGEMMA_TOKENIZER_PATH"
 uv run python -c "from openpi.models.tokenizer import PaligemmaTokenizer; PaligemmaTokenizer(48); print('tokenizer ok')"
 ```
 
+多 worker 诊断/训练前，额外设置：
+
+```bash
+ulimit -n
+ulimit -n 65535 || true
+export DATALOADER_PREFETCH_FACTOR=1
+```
+
+已知问题记录：
+
+```text
+`--batch-size 256 --num-workers 32` 诊断首次运行时触发 `OSError: [Errno 24] Too many open files`。
+原因是 PyTorch DataLoader 多 worker 传输 LIBERO 图像 batch 时占用大量文件句柄。
+这不是数据语义错误，也不是 CUDA/OOM。
+```
+
+已修复：
+
+```text
+`src/padp/data/openpi_libero_loader.py` 在创建 openpi LIBERO loader 前会：
+1. 对 num_workers > 0 设置 `torch.multiprocessing.set_sharing_strategy("file_system")`。
+2. 默认设置 `DATALOADER_PREFETCH_FACTOR=1`，减少 worker 预取带来的文件句柄压力。
+```
+
 1. 先诊断训练 loader 的 state/action 语义：
 
 ```bash
