@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import socket
 from pathlib import Path
 from typing import Any
@@ -28,9 +29,13 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         action_chunk_size: int,
         output_action_space: str = "absolute",
         gripper_action_mode: str = "raw",
+        seed: int | None = None,
         debug_log_steps: int = 0,
     ) -> None:
         register_omegaconf_resolvers()
+        if seed is not None:
+            _seed_everything(seed)
+
         cfg = OmegaConf.load(config_path)
         OmegaConf.resolve(cfg)
 
@@ -81,6 +86,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             "action_chunk_size": self._action_chunk_size,
             "output_action_space": self._output_action_space,
             "gripper_action_mode": self._gripper_action_mode,
+            "seed": seed,
             "horizon": horizon,
             "n_obs_steps": int(cfg.n_obs_steps),
             "notes": "PADP-VA ignores prompt and reuses the current openpi LIBERO state slicing.",
@@ -211,6 +217,15 @@ def _format_np(array: np.ndarray, *, precision: int = 4) -> str:
     return "[" + ", ".join(f"{float(value):.{precision}f}" for value in values) + "]"
 
 
+def _seed_everything(seed: int) -> None:
+    logging.info("Setting PADP serving random seed: %d", seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def register_omegaconf_resolvers() -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
@@ -227,6 +242,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--action-chunk-size", type=int, default=1)
     parser.add_argument("--output-action-space", choices=("absolute", "delta"), default="absolute")
     parser.add_argument("--gripper-action-mode", choices=("raw", "invert", "binary", "binary_invert"), default="raw")
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--debug-log-steps", type=int, default=0)
     return parser.parse_args()
 
@@ -240,6 +256,7 @@ def main() -> None:
         action_chunk_size=args.action_chunk_size,
         output_action_space=args.output_action_space,
         gripper_action_mode=args.gripper_action_mode,
+        seed=args.seed,
         debug_log_steps=args.debug_log_steps,
     )
 

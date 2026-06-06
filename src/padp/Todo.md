@@ -1448,3 +1448,95 @@ client 输出到：
 data/libero/padp_videos_10k_fullnorm_abs_gripper_invert
 data/libero/padp_results_10k_fullnorm_abs_gripper_invert.json
 ```
+
+## 2026-06-06：binary gripper 测试结果与下一步
+
+本轮先测试了 `--gripper-action-mode binary`，server debug 显示：
+
+```text
+model action[0] 的 gripper 仍接近 +0.98。
+env action[0] 的 gripper 被二值化为 +1.0000。
+small eval 仍为 0/6。
+```
+
+结论：
+
+```text
+1. binary 模式机械上生效了，gripper 已被强制到 +1。
+2. 因为 raw 模式原本就接近 +0.97 / +0.98，所以 binary 与 raw 的行为差异不会很大。
+3. binary 仍然 0/6，说明“连续 gripper 值没有硬二值化”不是主要问题。
+4. 当前 client 输出路径里如果带 invert 字样，但 server 实际参数是 binary，则以 server 日志为准；文件名只是本轮命名不准确。
+5. 四种 gripper 模式之间要公平比较，需要固定 PADP serving 端随机种子，否则 diffusion sampling 的随机性会混入比较。
+```
+
+已修改：
+
+```text
+src/padp/serving/serve_libero.py
+  - 新增 --seed。
+  - 会设置 random / numpy / torch / torch.cuda seed。
+  - metadata 中记录 seed。
+```
+
+下一步优先测 `binary_invert`，因为它能把本轮的 `+1` 精确翻成 `-1`，比先测 `invert` 更干净。
+
+server：
+
+```bash
+cd ~/Desktop/Guided-VLA
+git pull
+
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --gripper-action-mode binary_invert \
+  --seed 7 \
+  --debug-log-steps 10
+```
+
+client：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs_gripper_binary_invert_seed7 \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs_gripper_binary_invert_seed7.json
+```
+
+测试后检查：
+
+```bash
+python -m json.tool data/libero/padp_results_10k_fullnorm_abs_gripper_binary_invert_seed7.json
+ls -lh data/libero/padp_videos_10k_fullnorm_abs_gripper_binary_invert_seed7
+```
+
+判断规则：
+
+```text
+如果 binary_invert 后机械臂基本一直张开、抓取更差：说明 +1 很可能是关闭或至少不是核心错误，下一步不再纠结 gripper 符号。
+如果 binary_invert 后提前闭合消失、接触时机改善或出现成功：说明 gripper 方向需要固定为 invert/binary_invert。
+如果 binary 与 binary_invert 都是 0/6，但行为明显不同：保留 gripper 开关，下一步转向 task condition 或单 task 训练。
+如果两者视频都表现为抓错目标、无目标意识、动作平均化：优先实现 TASK_PADP 风格的 task/skill condition，而不是继续调 gripper。
+```

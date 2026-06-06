@@ -1,0 +1,124 @@
+# PADP-VA task-conditioned train config for GuidedVLA LIBERO data.
+#
+# This variant keeps the current PADP-VA architecture but adds a preset-size
+# task one-hot vector as an extra low-dim observation. It is intended for
+# LIBERO object-style multi-task training where PADP-VA otherwise ignores the
+# prompt/task identity.
+
+name: padp_libero_va_train_task
+
+task_condition:
+  enabled: true
+  num_tasks: 10
+  obs_key: task_onehot
+  id_source: skill_id
+  strict_task_id: true
+  fallback_task_id: null
+  prompt_to_task_id:
+    "pick up the alphabet soup and place it in the basket": 0
+    "pick up the cream cheese and place it in the basket": 1
+    "pick up the salad dressing and place it in the basket": 2
+
+shape_meta:
+  obs:
+    agentview_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape: [3, 224, 224]
+      type: rgb
+    robot0_eef_pos:
+      shape: [3]
+    robot0_eef_quat:
+      shape: [4]
+    robot0_gripper_qpos:
+      shape: [1]
+    task_onehot:
+      shape: [${task_condition.num_tasks}]
+      type: low_dim
+  action:
+    shape: [7]
+
+task_name: libero_va_task
+n_obs_steps: 1
+n_action_steps: 1
+horizon: 40
+window_exp_gamma: 0.2
+n_latency_steps: 0
+obs_as_global_cond: true
+
+openpi_config: pi0_libero_object
+repo_id: ybwowen/libero
+local_root_dir: /home/hy/.cache/huggingface/lerobot/ybwowen/libero
+
+policy:
+  _target_: padp.policy.robomimic.diffusion_unet_hybrid_padp.SlidingWindowDiffusionPolicy
+  shape_meta: ${shape_meta}
+
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    num_train_timesteps: ${horizon}
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    clip_sample: true
+    set_alpha_to_one: true
+    steps_offset: 0
+    prediction_type: sample
+
+  obs_encoder:
+    _target_: padp.model.vision.dinov3_timm_obs_encoder.TimmObsEncoder
+    shape_meta: ${shape_meta}
+    model_name: vit_tiny_patch16_224
+    pretrained: false
+    frozen: false
+    global_pool: ''
+    transforms:
+      - _target_: torchvision.transforms.Resize
+        size: [224, 224]
+        antialias: true
+    use_group_norm: false
+    share_rgb_model: true
+    imagenet_norm: true
+    feature_aggregation: cls_token
+
+  noise_schedule_mode: positionwise
+  noise_chunk_size: 1
+  window_loss_weights: exponential
+  window_exp_gamma: ${window_exp_gamma}
+
+  horizon: ${horizon}
+  n_action_steps: 1
+  n_obs_steps: ${n_obs_steps}
+  num_inference_steps: ${horizon}
+  obs_as_global_cond: ${obs_as_global_cond}
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  cond_predict_scale: true
+  pred_type: sample
+
+dataloader:
+  batch_size: 256
+  num_workers: 32
+  shuffle: true
+  pin_memory: true
+  persistent_workers: false
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+training:
+  device: cuda:1
+  seed: 42
+  max_train_steps: 1000
+  gradient_accumulate_every: 1
+  normalizer_path: checkpoints/padp_libero_va/normalizer_task.pt
+  output_dir: checkpoints/padp_libero_va/train_task_smoke
+  checkpoint_every: 100
+  log_every: 10
+  save_last_ckpt: true

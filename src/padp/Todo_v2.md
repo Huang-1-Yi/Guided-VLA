@@ -2975,3 +2975,85 @@ MUJOCO_GL=egl python examples/libero/main.py \
 如果 invert 后一直张开、抓不到：说明 +1 可能原本就是打开，问题在时机或任务条件。
 如果两者都 0/6 但行为不同：保留 gripper 开关，下一步加入 task condition 或做单 task 训练。
 ```
+
+## 2026-06-06：binary gripper 结果，下一步改为带 seed 的 binary_invert
+
+本轮已测试 `--gripper-action-mode binary`。server 端 debug 显示 gripper 后处理已经生效：
+
+```text
+model action[0] gripper 约为 +0.98
+env action[0] gripper = +1.0000
+small eval = 0/6
+```
+
+这说明：
+
+```text
+1. gripper 二值化代码是通的。
+2. raw 本来就接近 +1，所以 binary 不会显著改变策略。
+3. 0/6 不能继续解释为“gripper 没有被裁到 -1/+1”。
+4. 当前四模式对比必须固定 serving 端 seed，否则 diffusion 采样随机性会影响判断。
+```
+
+已修改：
+
+```text
+src/padp/serving/serve_libero.py
+  - 新增 --seed。
+  - 用于固定 random / numpy / torch / torch.cuda。
+```
+
+下一轮只测 `binary_invert`，并使用 `--seed 7`。如果它也 0/6，就把 gripper 符号问题降级，优先进入 task condition / 单任务训练验证。
+
+server：
+
+```bash
+cd ~/Desktop/Guided-VLA
+git pull
+
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --gripper-action-mode binary_invert \
+  --seed 7 \
+  --debug-log-steps 10
+```
+
+client：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs_gripper_binary_invert_seed7 \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs_gripper_binary_invert_seed7.json
+```
+
+后续分支：
+
+```text
+binary_invert 有改善：固定 gripper 后处理，再扩大 task/trial。
+binary_invert 没改善但行为不同：保留开关，继续查 task condition。
+binary_invert 与 binary 都失败且像平均策略：开始迁移 TASK_PADP 的 task/skill 条件输入，或先做单 task 训练验证上限。
+```
