@@ -34,7 +34,8 @@ shape_meta:
     robot0_gripper_qpos:
       shape: [1]
     task_onehot:
-      shape: [${task_condition.num_tasks}]
+      shape:
+        - ${task_condition.num_tasks}
       type: low_dim
   action:
     shape: [7]
