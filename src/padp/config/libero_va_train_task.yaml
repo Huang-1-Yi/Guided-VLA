@@ -9,7 +9,7 @@ name: padp_libero_va_train_task
 
 task_condition:
   enabled: true
-  num_tasks: 10
+  num_tasks: 40
   obs_key: task_onehot
   id_source: task_index
   strict_task_id: true
