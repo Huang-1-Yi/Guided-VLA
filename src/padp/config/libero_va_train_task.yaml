@@ -11,7 +11,7 @@ task_condition:
   enabled: true
   num_tasks: 10
   obs_key: task_onehot
-  id_source: skill_id
+  id_source: task_index
   strict_task_id: true
   fallback_task_id: null
   prompt_to_task_id:

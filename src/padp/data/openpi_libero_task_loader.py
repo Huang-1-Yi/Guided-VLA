@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
+import torch
 from torch.utils.data import IterableDataset
 
 from padp.common.normalize_util import get_identity_normalizer_from_stat
@@ -15,9 +16,11 @@ from padp.data.openpi_libero_loader import OpenPiLiberoLoaderConfig
 from padp.data.openpi_libero_loader import StreamingFeatureStats
 from padp.data.openpi_libero_loader import create_openpi_libero_loader
 from padp.data.openpi_libero_loader import load_padp_normalizer
+from padp.data.openpi_libero_loader import make_openpi_train_config
 from padp.data.openpi_libero_loader import save_padp_normalizer
 from padp.data.openpi_libero_loader import update_streaming_stats
 from padp.model.common.normalizer import LinearNormalizer
+from openpi.training import data_loader as openpi_data_loader
 
 
 @dataclass(frozen=True)
@@ -91,8 +94,11 @@ class OpenPiLiberoTaskPadpDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         loader = create_openpi_libero_loader(self.config)
-        for openpi_batch in loader:
-            yield self.adapter(openpi_batch)
+        task_loader = create_raw_task_index_loader(self.config)
+        for openpi_batch, raw_task_batch in zip(loader, task_loader, strict=False):
+            obs, actions, extra = _unpack_for_task_adapter(openpi_batch)
+            task_ids = extract_task_index_from_raw_batch(raw_task_batch)
+            yield self.adapter.adapt(obs, actions, extra=extra, task_ids=task_ids)
 
     def get_normalizer(self, num_batches: int = 8, log_every: int | None = 100) -> LinearNormalizer:
         return fit_task_padp_normalizer(
@@ -161,9 +167,55 @@ def fit_task_padp_normalizer(
     return normalizer
 
 
+def create_raw_task_index_loader(config: OpenPiLiberoTaskLoaderConfig):
+    """Create an untransformed loader with the same split/shuffle seed to read task_index."""
+    train_config = make_openpi_train_config(config)
+    data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
+    raw_dataset = openpi_data_loader.create_torch_dataset(
+        data_config,
+        train_config.model.action_horizon,
+        train_config.model,
+        split=config.split,
+    )
+    return openpi_data_loader.TorchDataLoader(
+        raw_dataset,
+        local_batch_size=config.batch_size,
+        sharding=None,
+        shuffle=config.shuffle,
+        num_batches=config.num_batches,
+        num_workers=config.num_workers,
+        seed=config.seed,
+        framework="pytorch",
+    )
+
+
+def extract_task_index_from_raw_batch(raw_batch: Any) -> torch.Tensor:
+    if not isinstance(raw_batch, dict):
+        raise TypeError(f"Expected raw task batch dict, got {type(raw_batch)!r}")
+
+    for key in ("task_index", "task_id"):
+        if key in raw_batch:
+            return torch.as_tensor(raw_batch[key]).detach().cpu().round().to(torch.long)
+
+    available = sorted(str(key) for key in raw_batch.keys())
+    raise KeyError(f"Raw LIBERO batch does not contain task_index/task_id. Available keys: {available}")
+
+
+def _unpack_for_task_adapter(openpi_batch: Any) -> tuple[Any, Any, Any | None]:
+    if isinstance(openpi_batch, dict):
+        return openpi_batch["obs"], openpi_batch["actions"], openpi_batch.get("extra")
+    if len(openpi_batch) == 3:
+        return openpi_batch[0], openpi_batch[1], openpi_batch[2]
+    if len(openpi_batch) == 2:
+        return openpi_batch[0], openpi_batch[1], None
+    raise ValueError(f"Expected openpi batch length 2 or 3, got {len(openpi_batch)}")
+
+
 __all__ = [
     "OpenPiLiberoTaskPadpDataset",
     "OpenPiLiberoTaskLoaderConfig",
+    "create_raw_task_index_loader",
+    "extract_task_index_from_raw_batch",
     "fit_task_padp_normalizer",
     "load_padp_normalizer",
     "save_padp_normalizer",

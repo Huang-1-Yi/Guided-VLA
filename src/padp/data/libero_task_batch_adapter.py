@@ -51,10 +51,26 @@ class LiberoTaskPadpBatchAdapter:
         obs, actions, extra = unpack_openpi_batch(openpi_batch)
         return self.adapt(obs, actions, extra=extra)
 
-    def adapt(self, obs: Any, actions: torch.Tensor, extra: Any | None = None) -> dict[str, Any]:
+    def adapt(
+        self,
+        obs: Any,
+        actions: torch.Tensor,
+        extra: Any | None = None,
+        task_ids: Any | None = None,
+    ) -> dict[str, Any]:
         batch = self._base_adapter.adapt(obs, actions, extra=extra)
         batch_size = int(batch["action"].shape[0])
-        task_ids = extract_task_ids(obs, extra, batch_size=batch_size, spec=self.task)
+        if task_ids is None:
+            task_ids = extract_task_ids(obs, extra, batch_size=batch_size, spec=self.task)
+        else:
+            task_ids = _coerce_task_ids(task_ids, batch_size=batch_size)
+            bad = (task_ids < 0) | (task_ids >= int(self.task.num_tasks))
+            if torch.any(bad):
+                unique = sorted(int(x) for x in task_ids.unique().tolist())
+                message = f"Task ids {unique} exceed preset num_tasks={self.task.num_tasks}."
+                if self.task.strict_task_id:
+                    raise ValueError(message)
+                task_ids = torch.clamp(task_ids, min=0, max=int(self.task.num_tasks) - 1)
         task_onehot = torch.nn.functional.one_hot(task_ids, num_classes=self.task.num_tasks).to(torch.float32)
         batch["obs"][self.task.obs_key] = repeat_obs_steps(task_onehot, self.n_obs_steps)
         return batch
