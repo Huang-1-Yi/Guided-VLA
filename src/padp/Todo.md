@@ -1392,3 +1392,26 @@ ls -lh data/libero/padp_videos_10k_fullnorm_abs
 > 0/6：继续扩大评估或训练到 30k。
 = 0/6：先看视频和 server debug log，再决定补 val loss、state/action 诊断或 task/language condition。
 ```
+
+## 2026-06-06：0/6 后新增训练集 action-space 诊断
+
+fullnorm 10k small eval 已完成但仍为 0/6。视频表现不是完全随机，而是存在提前闭合、碰撞闭合、抓取失败后伸直上抬等行为。
+
+当前新增：
+
+```text
+src/padp/training/diagnose_libero_action_space.py
+```
+
+下一步先运行该脚本，打印训练集 delta action 和 delta->absolute 后的 env action 范围，再和 serve_libero debug 输出对比。
+
+命令：
+
+```bash
+uv run python -m padp.training.diagnose_libero_action_space \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1068 \
+  --print-rows 8
+```

@@ -2793,3 +2793,92 @@ ls -lh data/libero/padp_videos_10k_fullnorm_abs
 ```
 
 这些应在 small eval 结果出来后再做。当前不要先补工程框架，否则可能在真正问题尚未定位前增加复杂度。
+
+## 2026-06-06：fullnorm small eval 仍为 0/6，进入 action-space 诊断
+
+full normalizer + 10k + absolute action 的 small eval 结果：
+
+```text
+libero_object task 0/1/2
+num_trials_per_task = 2
+total_episodes = 6
+total_successes = 0
+success_rate = 0.0
+videos: data/libero/padp_videos_10k_fullnorm_abs
+results: data/libero/padp_results_10k_fullnorm_abs.json
+```
+
+视频观察：
+
+```text
+提前闭合 2 个
+撞到盒子闭合 1 个
+抓取失败 3 个
+随后逐渐伸直并向上抬
+```
+
+当前判断：
+
+```text
+不是接口失败，也不是 normalizer 首要问题。
+优先排查 action/state/gripper 语义，以及 PADP-VA 无 task/language condition 导致多任务混训不清的问题。
+```
+
+已新增诊断脚本：
+
+```text
+src/padp/training/diagnose_libero_action_space.py
+```
+
+用途：
+
+```text
+读取训练集 openpi/PADP batch。
+打印训练集 delta action[:7] 的范围。
+按 openpi 的 AbsoluteActions 逻辑将前 6 维加回 state[:6]。
+打印训练集 env-space absolute action[:7] 的范围。
+单独打印 gripper action[6] 的范围。
+用于和 serve_libero debug log 中的推理动作范围对比。
+```
+
+服务器命令：
+
+```bash
+cd ~/Desktop/Guided-VLA
+git pull
+
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export OPENPI_PALIGEMMA_TOKENIZER_PATH=/home/hy/.cache/openpi/big_vision/paligemma_tokenizer.model
+export DATALOADER_PREFETCH_FACTOR=1
+export SDL_AUDIODRIVER=dummy
+ulimit -n 65535 || true
+
+uv run python -m padp.training.diagnose_libero_action_space \
+  --local-root-dir /home/hy/.cache/huggingface/lerobot/ybwowen/libero \
+  --batch-size 256 \
+  --num-workers 32 \
+  --num-batches 1068 \
+  --print-rows 8
+```
+
+重点对比：
+
+```text
+server absolute action roughly:
+x: -0.031 到 0.210
+y: -0.000 到 0.064
+z: -0.245 到 0.131
+gripper: 0.969 到 0.983
+```
+
+判断规则：
+
+```text
+如果 server absolute xyz 超出训练集 absolute 范围：优先查 normalizer / action decode / delta->absolute。
+如果 server gripper 一开始接近 0.98，但训练集中成功抓取前不应如此：优先查 gripper 开合语义或 gripper loss 偏置。
+如果动作范围都合理但仍抓错物体或提前闭合：优先加入 task/language condition，或先按单 task 训练。
+```
