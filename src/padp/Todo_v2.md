@@ -2882,3 +2882,96 @@ gripper: 0.969 到 0.983
 如果 server gripper 一开始接近 0.98，但训练集中成功抓取前不应如此：优先查 gripper 开合语义或 gripper loss 偏置。
 如果动作范围都合理但仍抓错物体或提前闭合：优先加入 task/language condition，或先按单 task 训练。
 ```
+
+## 2026-06-06：action-space 诊断结论与 gripper A/B 测试
+
+训练集 action-space 诊断结果：
+
+```text
+train absolute action first step [:7]
+  min:  [-0.9375, -0.9375, -0.9375, -0.2421, -0.3750, -0.3643, -1.0000]
+  max:  [ 0.9375,  0.9375,  0.9375,  0.3557,  0.3750,  0.3750,  1.0000]
+
+train absolute action all horizon [:7]
+  min:  [-0.9375, -0.9375, -0.9375, -0.2421, -0.3750, -0.3643, -1.0000]
+  max:  [ 0.9375,  0.9375,  0.9375,  0.3557,  0.3750,  0.3750,  1.0000]
+
+grunner/server debug absolute action roughly:
+  x: -0.031 到 0.210
+  y: -0.000 到 0.064
+  z: -0.245 到 0.131
+  gripper: 0.969 到 0.983
+```
+
+结论：
+
+```text
+1. xyz / rotation 的 server 输出基本在训练集 absolute action 范围内，不像是 delta->absolute 整体错误。
+2. gripper 是最可疑项：训练集 gripper 为二值 -1 / +1，但当前 server 几乎一直输出 +1。
+3. 视频里出现提前闭合、撞盒子闭合、抓取失败，和 gripper 输出偏向 +1 的现象一致。
+4. 下一步先做 gripper 方向 A/B 测试，不先重训。
+```
+
+已修改：
+
+```text
+src/padp/serving/serve_libero.py
+  - 新增 --gripper-action-mode。
+  - 可选 raw / invert / binary / binary_invert。
+  - 默认 raw，保持旧行为。
+  - debug log 现在同时打印 model action 和 env action。
+```
+
+先测试 gripper invert：
+
+server：
+
+```bash
+cd ~/Desktop/Guided-VLA
+git pull
+
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+conda activate lerobot
+
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export SDL_AUDIODRIVER=dummy
+
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --gripper-action-mode invert \
+  --debug-log-steps 10
+```
+
+client：
+
+```bash
+cd ~/Desktop/Guided-VLA
+source examples/libero/.venv/bin/activate
+unset PYTHONPATH
+export PYTHONPATH="$PWD/third_party/libero"
+export SDL_AUDIODRIVER=dummy
+
+MUJOCO_GL=egl python examples/libero/main.py \
+  --args.host 127.0.0.1 \
+  --args.port 8000 \
+  --args.task-suite-name libero_object \
+  --args.selected-task-ids 0 1 2 \
+  --args.num-trials-per-task 2 \
+  --args.replan-steps 1 \
+  --args.video-out-path data/libero/padp_videos_10k_fullnorm_abs_gripper_invert \
+  --args.results-json-path data/libero/padp_results_10k_fullnorm_abs_gripper_invert.json
+```
+
+判断：
+
+```text
+如果 invert 后提前闭合明显减少或成功率上升：说明 gripper 符号/开合方向需要修正。
+如果 invert 后一直张开、抓不到：说明 +1 可能原本就是打开，问题在时机或任务条件。
+如果两者都 0/6 但行为不同：保留 gripper 开关，下一步加入 task condition 或做单 task 训练。
+```

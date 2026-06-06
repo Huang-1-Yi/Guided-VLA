@@ -27,6 +27,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         device: str,
         action_chunk_size: int,
         output_action_space: str = "absolute",
+        gripper_action_mode: str = "raw",
         debug_log_steps: int = 0,
     ) -> None:
         register_omegaconf_resolvers()
@@ -62,7 +63,14 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         self._action_chunk_size = int(action_chunk_size)
         if output_action_space not in {"absolute", "delta"}:
             raise ValueError(f"output_action_space must be 'absolute' or 'delta', got {output_action_space!r}")
+        if gripper_action_mode not in {"raw", "invert", "binary", "binary_invert"}:
+            raise ValueError(
+                "gripper_action_mode must be one of "
+                "{'raw', 'invert', 'binary', 'binary_invert'}, "
+                f"got {gripper_action_mode!r}"
+            )
         self._output_action_space = output_action_space
+        self._gripper_action_mode = gripper_action_mode
         self._debug_log_steps = int(debug_log_steps)
         self._infer_count = 0
         self._metadata = {
@@ -72,6 +80,7 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
             "action_dim": int(cfg.shape_meta.action.shape[0]),
             "action_chunk_size": self._action_chunk_size,
             "output_action_space": self._output_action_space,
+            "gripper_action_mode": self._gripper_action_mode,
             "horizon": horizon,
             "n_obs_steps": int(cfg.n_obs_steps),
             "notes": "PADP-VA ignores prompt and reuses the current openpi LIBERO state slicing.",
@@ -86,11 +95,12 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         with torch.inference_mode():
             output = self._policy.predict_action(obs_dict)
 
-        actions = output["action"][0].detach().cpu().numpy().astype(np.float32)
-        actions = self._to_env_actions(obs, actions)
+        model_actions = output["action"][0].detach().cpu().numpy().astype(np.float32)
+        actions = self._to_env_actions(obs, model_actions)
+        actions = self._postprocess_gripper(actions)
         if not np.isfinite(actions).all():
             raise RuntimeError("PADP predicted non-finite actions.")
-        self._maybe_log_debug(obs, obs_dict, actions)
+        self._maybe_log_debug(obs, obs_dict, model_actions, actions)
         return {"actions": actions}
 
     def reset(self) -> None:
@@ -126,7 +136,24 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         env_actions[..., :6] += raw_state[:6]
         return env_actions
 
-    def _maybe_log_debug(self, obs: dict, obs_dict: dict[str, torch.Tensor], actions: np.ndarray) -> None:
+    def _postprocess_gripper(self, actions: np.ndarray) -> np.ndarray:
+        if self._gripper_action_mode == "raw":
+            return actions
+
+        result = np.array(actions, dtype=np.float32, copy=True)
+        if self._gripper_action_mode in {"binary", "binary_invert"}:
+            result[..., 6] = np.where(result[..., 6] >= 0.0, 1.0, -1.0)
+        if self._gripper_action_mode in {"invert", "binary_invert"}:
+            result[..., 6] *= -1.0
+        return result
+
+    def _maybe_log_debug(
+        self,
+        obs: dict,
+        obs_dict: dict[str, torch.Tensor],
+        model_actions: np.ndarray,
+        env_actions: np.ndarray,
+    ) -> None:
         if self._infer_count >= self._debug_log_steps:
             self._infer_count += 1
             return
@@ -137,10 +164,16 @@ class PadpLiberoPolicy(_base_policy.BasePolicy):
         logging.info("split eef_pos: %s", _format_tensor(obs_dict["robot0_eef_pos"]))
         logging.info("split state[3:7]: %s", _format_tensor(obs_dict["robot0_eef_quat"]))
         logging.info("split gripper: %s", _format_tensor(obs_dict["robot0_gripper_qpos"]))
-        logging.info("pred actions shape: %s", actions.shape)
+        logging.info("model actions shape: %s", model_actions.shape)
         logging.info("output action space: %s", self._output_action_space)
-        logging.info("pred action[0]: %s", _format_np(actions[0]))
-        logging.info("pred action min/max: %s / %s", _format_np(actions.min(axis=0)), _format_np(actions.max(axis=0)))
+        logging.info("gripper action mode: %s", self._gripper_action_mode)
+        logging.info("model action[0]: %s", _format_np(model_actions[0]))
+        logging.info("env action[0]: %s", _format_np(env_actions[0]))
+        logging.info(
+            "env action min/max: %s / %s",
+            _format_np(env_actions.min(axis=0)),
+            _format_np(env_actions.max(axis=0)),
+        )
         self._infer_count += 1
 
 
@@ -193,6 +226,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--action-chunk-size", type=int, default=1)
     parser.add_argument("--output-action-space", choices=("absolute", "delta"), default="absolute")
+    parser.add_argument("--gripper-action-mode", choices=("raw", "invert", "binary", "binary_invert"), default="raw")
     parser.add_argument("--debug-log-steps", type=int, default=0)
     return parser.parse_args()
 
@@ -205,6 +239,7 @@ def main() -> None:
         device=args.device,
         action_chunk_size=args.action_chunk_size,
         output_action_space=args.output_action_space,
+        gripper_action_mode=args.gripper_action_mode,
         debug_log_steps=args.debug_log_steps,
     )
 

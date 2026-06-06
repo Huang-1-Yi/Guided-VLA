@@ -1415,3 +1415,36 @@ uv run python -m padp.training.diagnose_libero_action_space \
   --num-batches 1068 \
   --print-rows 8
 ```
+
+## 2026-06-06：新增 gripper 推理开关
+
+action-space 诊断显示 xyz / rotation 范围基本正常，gripper 最可疑。当前 server 输出 gripper 接近 +1，视频中出现提前闭合。
+
+已修改：
+
+```text
+src/padp/serving/serve_libero.py
+  - 新增 --gripper-action-mode raw|invert|binary|binary_invert
+  - 默认 raw 保持旧行为
+```
+
+下一步先跑 gripper invert small eval：
+
+```bash
+uv run python -m padp.serving.serve_libero \
+  --checkpoint-path checkpoints/padp_libero_va/train_pi05_batch_10kstep_fullnorm/last.pt \
+  --device cuda:1 \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --action-chunk-size 1 \
+  --output-action-space absolute \
+  --gripper-action-mode invert \
+  --debug-log-steps 10
+```
+
+client 输出到：
+
+```text
+data/libero/padp_videos_10k_fullnorm_abs_gripper_invert
+data/libero/padp_results_10k_fullnorm_abs_gripper_invert.json
+```
